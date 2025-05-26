@@ -14,7 +14,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
-  // Login route - create or get user
+  // Login route - existing users only
   app.post('/api/login', async (req: any, res) => {
     try {
       const { username } = req.body;
@@ -22,13 +22,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Username must be at least 2 characters" });
       }
 
-      let user = await storage.getUserByUsername(username.trim());
+      const user = await storage.getUserByUsername(username.trim());
       if (!user) {
-        user = await storage.createUser({
-          id: nanoid(),
-          username: username.trim(),
-          status: "online",
-        });
+        return res.status(404).json({ message: "Username not found. Please sign up first." });
       }
 
       req.session.userId = user.id;
@@ -36,6 +32,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error during login:", error);
       res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  // Signup route - new users only
+  app.post('/api/signup', async (req: any, res) => {
+    try {
+      const { username, firstName, lastName } = req.body;
+      if (!username || username.trim().length < 2) {
+        return res.status(400).json({ message: "Username must be at least 2 characters" });
+      }
+
+      // Check if username already exists
+      const existingUser = await storage.getUserByUsername(username.trim());
+      if (existingUser) {
+        return res.status(409).json({ message: "Username already exists. Please choose a different one or login." });
+      }
+
+      const user = await storage.createUser({
+        id: nanoid(),
+        username: username.trim(),
+        firstName: firstName?.trim() || null,
+        lastName: lastName?.trim() || null,
+        status: "online",
+      });
+
+      req.session.userId = user.id;
+      res.json(user);
+    } catch (error) {
+      console.error("Error during signup:", error);
+      res.status(500).json({ message: "Signup failed" });
     }
   });
 
