@@ -60,7 +60,7 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     if (formData.firstName || formData.lastName) {
       return `${formData.firstName} ${formData.lastName}`.trim();
     }
-    return user?.email?.split('@')[0] || 'User';
+    return user?.username || 'User';
   };
 
   const getInitials = () => {

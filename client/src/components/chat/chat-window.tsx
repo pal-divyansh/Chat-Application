@@ -66,7 +66,7 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
     if (user.firstName || user.lastName) {
       return `${user.firstName || ''} ${user.lastName || ''}`.trim();
     }
-    return user.email?.split('@')[0] || 'User';
+    return user.username || 'User';
   };
 
   const getInitials = (user: User) => {

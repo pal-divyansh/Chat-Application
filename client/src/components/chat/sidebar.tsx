@@ -35,7 +35,7 @@ export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: S
   const filteredConversations = conversations.filter(conv =>
     conv.user.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     conv.user.lastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    conv.user.email?.toLowerCase().includes(searchQuery.toLowerCase())
+    conv.user.username?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleLogout = async () => {
@@ -52,7 +52,7 @@ export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: S
     if (user.firstName || user.lastName) {
       return `${user.firstName || ''} ${user.lastName || ''}`.trim();
     }
-    return user.email?.split('@')[0] || 'User';
+    return user.username || 'User';
   };
 
   const getInitials = (user: UserType) => {
