@@ -1,19 +1,54 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertMessageSchema, updateUserSchema } from "@shared/schema";
+import { insertMessageSchema, updateUserSchema, insertUserSchema } from "@shared/schema";
 import { encrypt, decrypt } from "../client/src/lib/encryption";
+import { nanoid } from "nanoid";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
-  await setupAuth(app);
+  // Simple session middleware to track current user
+  app.use((req: any, res, next) => {
+    if (!req.session) {
+      req.session = {};
+    }
+    next();
+  });
 
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  // Login route - create or get user
+  app.post('/api/login', async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      const { username } = req.body;
+      if (!username || username.trim().length < 2) {
+        return res.status(400).json({ message: "Username must be at least 2 characters" });
+      }
+
+      let user = await storage.getUserByUsername(username.trim());
+      if (!user) {
+        user = await storage.createUser({
+          id: nanoid(),
+          username: username.trim(),
+          status: "online",
+        });
+      }
+
+      req.session.userId = user.id;
+      res.json(user);
+    } catch (error) {
+      console.error("Error during login:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  // Get current user
+  app.get('/api/auth/user', async (req: any, res) => {
+    try {
+      if (!req.session?.userId) {
+        return res.status(401).json({ message: "Not logged in" });
+      }
+      const user = await storage.getUser(req.session.userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
@@ -21,12 +56,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Logout route
+  app.post('/api/logout', (req: any, res) => {
+    req.session.userId = null;
+    res.json({ message: "Logged out" });
+  });
+
+  // Middleware to check if user is logged in
+  const requireAuth = (req: any, res: any, next: any) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "Not logged in" });
+    }
+    next();
+  };
+
   // User routes
-  app.get('/api/users', isAuthenticated, async (req: any, res) => {
+  app.get('/api/users', requireAuth, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      // Include all users including self for testing purposes
-      const users = await storage.getAllUsers();
+      const userId = req.session.userId;
+      const users = await storage.getAllUsers(userId);
       res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
@@ -34,9 +82,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/users/profile', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/users/profile', requireAuth, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId;
       const updates = updateUserSchema.parse(req.body);
       const user = await storage.updateUser(userId, updates);
       res.json(user);
@@ -47,9 +95,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Message routes
-  app.get('/api/messages/:userId', isAuthenticated, async (req: any, res) => {
+  app.get('/api/messages/:userId', requireAuth, async (req: any, res) => {
     try {
-      const currentUserId = req.user.claims.sub;
+      const currentUserId = req.session.userId;
       const { userId } = req.params;
       
       const messages = await storage.getMessagesBetweenUsers(currentUserId, userId);
@@ -70,9 +118,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/messages', isAuthenticated, async (req: any, res) => {
+  app.post('/api/messages', requireAuth, async (req: any, res) => {
     try {
-      const senderId = req.user.claims.sub;
+      const senderId = req.session.userId;
       const messageData = insertMessageSchema.parse({
         ...req.body,
         senderId,
@@ -94,11 +142,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/conversations', isAuthenticated, async (req: any, res) => {
+  app.get('/api/conversations', requireAuth, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      // Include all users for conversations (including self for testing)
-      const users = await storage.getAllUsers();
+      const userId = req.session.userId;
+      const users = await storage.getAllUsers(userId);
       
       // Get last message and unread count for each user
       const conversations = await Promise.all(

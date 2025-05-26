@@ -38,8 +38,14 @@ export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: S
     conv.user.email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleLogout = () => {
-    window.location.href = "/api/logout";
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+      window.location.reload();
+    } catch (error) {
+      console.error("Logout error:", error);
+      window.location.reload();
+    }
   };
 
   const getDisplayName = (user: UserType) => {
