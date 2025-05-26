@@ -1,135 +1,181 @@
-import {
-  users,
-  messages,
-  type User,
-  type UpsertUser,
-  type InsertMessage,
-  type Message,
-  type UpdateUser,
-} from "@shared/schema";
-import { db } from "./db";
-import { eq, or, and, desc, not } from "drizzle-orm";
+import { UserModel, MessageModel, type User, type UpsertUser, type InsertMessage, type Message, type UpdateUser } from "@shared/schema";
+import mongoose from 'mongoose';
+import { decrypt } from '../client/src/lib/encryption';
 
-// Interface for storage operations
-export interface IStorage {
+export class DatabaseStorage {
   // User operations
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: UpsertUser): Promise<User>;
-  updateUser(id: string, updates: UpdateUser): Promise<User | undefined>;
-  getAllUsers(excludeId?: string): Promise<User[]>;
-  
-  // Message operations
-  createMessage(message: InsertMessage, encryptedContent: string): Promise<Message>;
-  getMessagesBetweenUsers(userId1: string, userId2: string): Promise<Message[]>;
-  markMessagesAsRead(senderId: string, receiverId: string): Promise<void>;
-  getUnreadMessageCount(userId: string, fromUserId: string): Promise<number>;
-  getLastMessageBetweenUsers(userId1: string, userId2: string): Promise<Message | undefined>;
-}
-
-export class DatabaseStorage implements IStorage {
-  // User operations
-
-  async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+  async getUser(id: string): Promise<User | null> {
+    if (!mongoose.Types.ObjectId.isValid(id)) return null;
+    return await UserModel.findById(id).lean().exec();
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user;
+  async getUserByUsername(username: string): Promise<User | null> {
+    return await UserModel.findOne({ username }).lean().exec();
   }
 
   async createUser(userData: UpsertUser): Promise<User> {
-    const [user] = await db
-      .insert(users)
-      .values(userData)
-      .returning();
-    return user;
+    const user = new UserModel(userData);
+    user._id = new mongoose.Types.ObjectId();
+    const savedUser = await user.save();
+    return savedUser.toObject();
   }
 
-  async updateUser(id: string, updates: UpdateUser): Promise<User | undefined> {
-    const [user] = await db
-      .update(users)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(users.id, id))
-      .returning();
-    return user;
+  async updateUser(id: string, updates: UpdateUser): Promise<User | null> {
+    if (!mongoose.Types.ObjectId.isValid(id)) return null;
+    return await UserModel.findByIdAndUpdate(
+      id,
+      { ...updates, updatedAt: new Date() },
+      { new: true }
+    ).lean().exec();
   }
 
   async getAllUsers(excludeId?: string): Promise<User[]> {
-    if (excludeId) {
-      return await db.select().from(users).where(not(eq(users.id, excludeId)));
-    }
-    return await db.select().from(users);
+    const query = excludeId ? UserModel.find({ _id: { $ne: excludeId } }) : UserModel.find();
+    return await query.lean().exec();
   }
 
   // Message operations
-  async createMessage(message: InsertMessage, encryptedContent: string): Promise<Message> {
-    const [newMessage] = await db
-      .insert(messages)
-      .values({
-        ...message,
-        encryptedContent,
-        timestamp: new Date(),
-      })
-      .returning();
-    return newMessage;
+  async createMessage(messageData: InsertMessage): Promise<Message> {
+    const newMessage = new MessageModel({
+      _id: new mongoose.Types.ObjectId(),
+      senderId: messageData.senderId,
+      receiverId: messageData.receiverId,
+      encryptedContent: messageData.content, // The content is already encrypted when it reaches this point
+      isRead: messageData.isRead
+    });
+    return await newMessage.save();
   }
 
   async getMessagesBetweenUsers(userId1: string, userId2: string): Promise<Message[]> {
-    return await db
-      .select()
-      .from(messages)
-      .where(
-        or(
-          and(eq(messages.senderId, userId1), eq(messages.receiverId, userId2)),
-          and(eq(messages.senderId, userId2), eq(messages.receiverId, userId1))
-        )
-      )
-      .orderBy(messages.timestamp);
+    const messages = await MessageModel.find({
+      $or: [
+        { senderId: userId1, receiverId: userId2 },
+        { senderId: userId2, receiverId: userId1 }
+      ]
+    }).sort({ createdAt: 1 }).lean().exec();
+
+    return messages.map(message => ({
+      ...message,
+      content: decrypt(message.encryptedContent)
+    }));
   }
 
   async markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
-    await db
-      .update(messages)
-      .set({ isRead: true })
-      .where(
-        and(
-          eq(messages.senderId, senderId),
-          eq(messages.receiverId, receiverId),
-          eq(messages.isRead, false)
-        )
-      );
+    await MessageModel.updateMany(
+      {
+        senderId,
+        receiverId,
+        isRead: false
+      },
+      { $set: { isRead: true } }
+    ).exec();
   }
 
   async getUnreadMessageCount(userId: string, fromUserId: string): Promise<number> {
-    const result = await db
-      .select({ count: messages.id })
-      .from(messages)
-      .where(
-        and(
-          eq(messages.receiverId, userId),
-          eq(messages.senderId, fromUserId),
-          eq(messages.isRead, false)
-        )
-      );
-    return result.length;
+    return await MessageModel.countDocuments({
+      senderId: fromUserId,
+      receiverId: userId,
+      isRead: false
+    }).exec();
   }
 
-  async getLastMessageBetweenUsers(userId1: string, userId2: string): Promise<Message | undefined> {
-    const [lastMessage] = await db
-      .select()
-      .from(messages)
-      .where(
-        or(
-          and(eq(messages.senderId, userId1), eq(messages.receiverId, userId2)),
-          and(eq(messages.senderId, userId2), eq(messages.receiverId, userId1))
-        )
-      )
-      .orderBy(desc(messages.timestamp))
-      .limit(1);
-    return lastMessage;
+  async getLastMessageBetweenUsers(userId1: string, userId2: string): Promise<Message | null> {
+    return await MessageModel.findOne({
+      $or: [
+        { senderId: userId1, receiverId: userId2 },
+        { senderId: userId2, receiverId: userId1 }
+      ]
+    }).sort({ createdAt: -1 }).lean().exec();
+  }
+
+  async searchUsers(query: string, excludeId: string): Promise<User[]> {
+    const searchQuery = {
+      _id: { $ne: excludeId },
+      $or: [
+        { username: { $regex: query, $options: 'i' } },
+        { firstName: { $regex: query, $options: 'i' } },
+        { lastName: { $regex: query, $options: 'i' } }
+      ]
+    };
+    return await UserModel.find(searchQuery).lean().exec();
+  }
+
+  async getUserChats(userId: string): Promise<Array<{ user: User; lastMessage: Message | null }>> {
+    // Get all unique user IDs that the current user has chatted with
+    const userMessages = await MessageModel.find({
+      $or: [
+        { senderId: userId },
+        { receiverId: userId }
+      ]
+    }).lean().exec();
+
+    const chatUserIds = new Set<string>();
+    userMessages.forEach(msg => {
+      const otherUserId = msg.senderId.toString() === userId ? 
+        msg.receiverId.toString() : 
+        msg.senderId.toString();
+      if (otherUserId) {
+        chatUserIds.add(otherUserId);
+      }
+    });
+
+    // Get user details and their last message
+    const chats = await Promise.all(
+      Array.from(chatUserIds).map(async (otherUserId) => {
+        const user = await this.getUser(otherUserId);
+        if (!user) return null;
+
+        const lastMessage = await this.getLastMessageBetweenUsers(userId, otherUserId);
+        return { user, lastMessage };
+      })
+    );
+
+    return chats.filter((chat): chat is { user: User; lastMessage: Message | null } => chat !== null);
+  }
+
+  async deleteMessage(messageId: string, userId: string): Promise<boolean> {
+    if (!mongoose.Types.ObjectId.isValid(messageId)) return false;
+    
+    const result = await MessageModel.deleteOne({
+      _id: messageId,
+      $or: [
+        { senderId: userId },
+        { receiverId: userId }
+      ]
+    }).exec();
+    
+    return result.deletedCount > 0;
+  }
+
+  // Add function to delete multiple messages
+  async deleteMessages(messageIds: string[], userId: string): Promise<number> {
+    if (messageIds.length === 0) return 0;
+
+    // Ensure all IDs are valid ObjectIds (optional but good practice)
+    const validObjectIds = messageIds.filter(id => mongoose.Types.ObjectId.isValid(id));
+    
+    if (validObjectIds.length === 0) return 0; // No valid IDs to delete
+
+    const result = await MessageModel.deleteMany({
+      _id: { $in: validObjectIds },
+      // Optional: Only allow deletion if the user is either sender or receiver of ALL messages
+      // For simpler implementation, we'll allow deletion if user is sender/receiver of ANY of the messages.
+      // A more robust check might involve iterating or using aggregation.
+      $or: [
+        { senderId: userId },
+        { receiverId: userId }
+      ]
+    }).exec();
+    
+    return result.deletedCount;
+  }
+
+  async updateUserStatus(userId: string, status: string): Promise<void> {
+    if (!mongoose.Types.ObjectId.isValid(userId)) return;
+    await UserModel.findByIdAndUpdate(userId, { 
+      status,
+      updatedAt: new Date() 
+    }).exec();
   }
 }
 

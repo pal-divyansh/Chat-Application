@@ -5,8 +5,88 @@ import { insertMessageSchema, updateUserSchema, insertUserSchema } from "@shared
 import { encrypt, decrypt } from "../client/src/lib/encryption";
 import { nanoid } from "nanoid";
 import bcrypt from "bcrypt";
+import { Server as SocketIOServer } from "socket.io";
+import type { Socket } from "socket.io";
+import multer from 'multer';
+import path from 'path';
 
-export async function registerRoutes(app: Express): Promise<Server> {
+// Set up multer storage
+const storageConfig = multer.diskStorage({
+  destination: (req, file, cb) => {
+    // Define the destination directory for uploads
+    const uploadPath = path.join(__dirname, '../uploads/profile_pictures');
+    // Create the directory if it doesn't exist (optional, but good practice)
+    // You might want a more robust solution for production
+    require('fs').mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    // Define the filename (e.g., user ID + original extension)
+    // We'll likely want to use the user ID here later
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const fileExtension = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + fileExtension);
+  },
+});
+
+const upload = multer({ storage: storageConfig });
+
+export function registerRoutes(app: Express): Server {
+  const httpServer = createServer(app);
+  const io = new SocketIOServer(httpServer, {
+    cors: {
+      origin: "http://localhost:5173",
+      methods: ["GET", "POST"],
+      credentials: true
+    }
+  });
+
+  // Socket.IO connection handling
+  io.on('connection', (socket: Socket) => {
+    console.log('Client connected:', socket.id);
+
+    socket.on('join', (userId: string) => {
+      socket.join(userId);
+      console.log(`User ${userId} joined their room`);
+    });
+
+    socket.on('sendMessage', async (message: { senderId: string; receiverId: string; content: string }) => {
+      try {
+        const { senderId, receiverId, content } = message;
+        
+        // Encrypt message content
+        const encryptedContent = encrypt(content);
+        
+        // Save message to database
+        const createdMessage = await storage.createMessage({
+          senderId,
+          receiverId,
+          content: encryptedContent,
+          isRead: false
+        });
+
+        // Decrypt message for sending
+        const decryptedMessage = {
+          ...createdMessage,
+          content: decrypt(createdMessage.encryptedContent)
+        };
+
+        // Emit to sender
+        io.to(senderId).emit('newMessage', decryptedMessage);
+        
+        // Emit to receiver
+        io.to(receiverId).emit('newMessage', decryptedMessage);
+      } catch (error) {
+        console.error('Error handling message:', error);
+        socket.emit('error', { message: 'Failed to send message' });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Client disconnected:', socket.id);
+    });
+  });
+
   // Simple session middleware to track current user
   app.use((req: any, res, next) => {
     if (!req.session) {
@@ -37,7 +117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Invalid password" });
       }
 
-      req.session.userId = user.id;
+      req.session.userId = user._id.toString();
       
       // Return user without password
       const { password: _, ...userWithoutPassword } = user;
@@ -50,6 +130,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Signup route - new users only
   app.post('/api/signup', async (req: any, res) => {
+    console.log('Signup request received:', req.body);
+    
+    // Set content type
+    res.setHeader('Content-Type', 'application/json');
+    
+    // Validate request body
+    if (!req.body || Object.keys(req.body).length === 0) {
+      console.error('Empty request body received');
+      return res.status(400).json({ message: 'Request body cannot be empty' });
+    }
+    
     try {
       const { username, password, firstName, lastName } = req.body;
       if (!username || username.trim().length < 2) {
@@ -69,22 +160,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       const user = await storage.createUser({
-        id: nanoid(),
         username: username.trim(),
         password: hashedPassword,
-        firstName: firstName?.trim() || null,
-        lastName: lastName?.trim() || null,
-        status: "online",
+        firstName: firstName?.trim() || '',
+        lastName: lastName?.trim() || '',
+        status: "online"
       });
 
-      req.session.userId = user.id;
+      req.session.userId = user._id.toString();
       
       // Return user without password
       const { password: _, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error) {
       console.error("Error during signup:", error);
-      res.status(500).json({ message: "Signup failed" });
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+          // @ts-ignore
+          code: error.code,
+          // @ts-ignore
+          keyPattern: error.keyPattern,
+          // @ts-ignore
+          keyValue: error.keyValue
+        });
+      }
+      res.status(500).json({ 
+        message: "Signup failed",
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
@@ -143,24 +249,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // New endpoint for profile picture upload
+  app.post('/api/upload/profile-picture', requireAuth, upload.single('profilePicture'), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded.' });
+      }
+
+      // At this point, the file is saved in the uploads/profile_pictures directory
+      // The file path is available in req.file.path
+
+      // We need to update the user's profileImageUrl in the database
+      const userId = req.session.userId;
+      const profileImageUrl = `/uploads/profile_pictures/${req.file.filename}`; // Construct URL
+
+      const updatedUser = await storage.updateUser(userId, { profileImageUrl });
+
+      res.json({ message: 'Profile picture uploaded successfully', user: updatedUser });
+
+    } catch (error) {
+      console.error('Error uploading profile picture:', error);
+      res.status(500).json({ message: 'Failed to upload profile picture' });
+    }
+  });
+
   // Message routes
-  app.get('/api/messages/:userId', requireAuth, async (req: any, res) => {
+  app.get('/api/messages/:otherUserId', requireAuth, async (req: any, res) => {
     try {
       const currentUserId = req.session.userId;
-      const { userId } = req.params;
+      const { otherUserId } = req.params;
       
-      const messages = await storage.getMessagesBetweenUsers(currentUserId, userId);
+      // Mark messages as read when fetching
+      await storage.markMessagesAsRead(otherUserId, currentUserId);
+
+      // messages are now decrypted in the storage.getMessagesBetweenUsers method
+      const messages = await storage.getMessagesBetweenUsers(currentUserId, otherUserId);
       
-      // Decrypt messages for display
-      const decryptedMessages = messages.map(msg => ({
-        ...msg,
-        content: decrypt(msg.encryptedContent),
-      }));
+      // Sort messages by createdAt timestamp
+      messages.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateA - dateB;
+      });
       
-      // Mark messages as read
-      await storage.markMessagesAsRead(userId, currentUserId);
-      
-      res.json(decryptedMessages);
+      res.json(messages);
     } catch (error) {
       console.error("Error fetching messages:", error);
       res.status(500).json({ message: "Failed to fetch messages" });
@@ -175,61 +307,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
         senderId,
       });
       
-      // Encrypt message content
+      if (!messageData.content) {
+        return res.status(400).json({ message: "Message content is required" });
+      }
+      
+      // Encrypt message content before saving
       const encryptedContent = encrypt(messageData.content);
       
-      const message = await storage.createMessage(messageData, encryptedContent);
-      
-      // Return message with decrypted content
-      res.json({
-        ...message,
-        content: messageData.content,
+      // Create message in storage
+      const createdMessage = await storage.createMessage({
+        senderId: messageData.senderId,
+        receiverId: messageData.receiverId,
+        content: encryptedContent, // Pass the encrypted content
+        isRead: false
       });
+      
+      // Return message with decrypted content for immediate display
+      const decryptedMessage = { 
+        ...createdMessage, 
+        content: decrypt(createdMessage.encryptedContent) 
+      };
+      
+      res.json(decryptedMessage);
     } catch (error) {
       console.error("Error creating message:", error);
-      res.status(500).json({ message: "Failed to send message" });
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack
+        });
+      }
+      res.status(500).json({ 
+        message: "Failed to create message",
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
-  app.get('/api/conversations', requireAuth, async (req: any, res) => {
+  app.get('/api/chats', requireAuth, async (req: any, res) => {
     try {
       const userId = req.session.userId;
+      // Fetch all users except the current one
       const users = await storage.getAllUsers(userId);
-      
-      // Get last message and unread count for each user
-      const conversations = await Promise.all(
-        users.map(async (user) => {
-          const lastMessage = await storage.getLastMessageBetweenUsers(userId, user.id);
-          const unreadCount = await storage.getUnreadMessageCount(userId, user.id);
-          
-          return {
-            user,
-            lastMessage: lastMessage ? {
-              ...lastMessage,
-              content: decrypt(lastMessage.encryptedContent),
-            } : null,
-            unreadCount,
-          };
-        })
-      );
-      
-      // Sort by last message timestamp
-      conversations.sort((a, b) => {
-        if (!a.lastMessage && !b.lastMessage) return 0;
-        if (!a.lastMessage) return 1;
-        if (!b.lastMessage) return -1;
-        const aTime = a.lastMessage.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0;
-        const bTime = b.lastMessage.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0;
-        return bTime - aTime;
-      });
-      
-      res.json(conversations);
+
+      console.log(`Fetched users for sidebar (excluding ${userId}):`, users);
+
+      // Return the list of users. Conversation details (last message, unread count)
+      // can be fetched when a user is selected.
+      res.json(users);
     } catch (error) {
-      console.error("Error fetching conversations:", error);
-      res.status(500).json({ message: "Failed to fetch conversations" });
+      console.error("Error fetching users for chat sidebar:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
     }
   });
 
-  const httpServer = createServer(app);
+  // Add DELETE endpoint for messages
+  app.delete('/api/messages', requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.userId;
+      const { messageIds } = req.body; // Expecting an array of message IDs in the request body
+
+      if (!Array.isArray(messageIds) || messageIds.length === 0) {
+        return res.status(400).json({ message: "Invalid or empty list of message IDs provided." });
+      }
+
+      // Call the deleteMessages function from storage
+      const deletedCount = await storage.deleteMessages(messageIds, userId);
+
+      res.json({ message: `Successfully deleted ${deletedCount} message(s).`, deletedCount });
+    } catch (error) {
+      console.error("Error deleting messages:", error);
+      res.status(500).json({ message: "Failed to delete messages" });
+    }
+  });
+
   return httpServer;
 }

@@ -1,14 +1,16 @@
 import { useState, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Phone, Video, MoreVertical, Paperclip, Smile, Send } from "lucide-react";
+import { Phone, Video, MoreVertical, Paperclip, Smile, Send, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest } from "@/lib/queryClient";
+import { useSocket } from "@/hooks/useSocket";
 import { format } from "date-fns";
 import type { User, Message } from "@shared/schema";
+import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
+import { Types } from 'mongoose';
 
 interface ChatWindowProps {
   selectedUser: User | null;
@@ -17,41 +19,107 @@ interface ChatWindowProps {
 export default function ChatWindow({ selectedUser }: ChatWindowProps) {
   const [messageInput, setMessageInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { user: currentUser } = useAuth();
+  const { socket, sendMessage } = useSocket();
   const queryClient = useQueryClient();
 
-  const { data: messages = [], isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/messages", selectedUser?.id],
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+
+  // Fetch initial messages
+  const { data: fetchedMessages, isLoading } = useQuery<Message[]>({
+    queryKey: ["/api/messages", selectedUser?._id?.toString()],
+    queryFn: async () => {
+      if (!selectedUser) return [];
+      const response = await fetch(`/api/messages/${selectedUser._id.toString()}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch messages');
+      }
+      const data: Message[] = await response.json();
+      console.log('Fetched initial messages:', data);
+      return data;
+    },
     enabled: !!selectedUser,
-    refetchInterval: 2000, // Refresh every 2 seconds for real-time updates
   });
 
-  const sendMessageMutation = useMutation({
-    mutationFn: async (content: string) => {
-      return await apiRequest("POST", "/api/messages", {
-        receiverId: selectedUser?.id,
-        content,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages", selectedUser?.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
-      setMessageInput("");
-    },
-  });
+  // Update local messages when fetched messages change
+  useEffect(() => {
+    if (fetchedMessages) {
+      console.log('Fetched messages updated, setting local state:', fetchedMessages);
+      setLocalMessages(fetchedMessages);
+    }
+  }, [fetchedMessages]);
 
+  // Listen for new messages
+  useEffect(() => {
+    if (!socket) {
+      console.log('Socket not available in chat window useEffect.');
+      return;
+    }
+
+    console.log('Setting up newMessage event listener.');
+
+    const handleNewMessage = (message: any) => {
+      console.log('newMessage event received:', message);
+
+      // Check if the message is between the current user and the selected user
+      const currentUserIdString = currentUser?._id?.toString();
+      const selectedUserIdString = selectedUser?._id?.toString();
+
+      const isMessageForThisChat =
+        (message.senderId === currentUserIdString && message.receiverId === selectedUserIdString) ||
+        (message.senderId === selectedUserIdString && message.receiverId === currentUserIdString);
+
+      if (isMessageForThisChat) {
+        console.log('Message is for the selected chat. Updating local messages.', message);
+
+        // Create a clean message object with only necessary properties
+        // Explicitly map properties to match the expected Message type structure
+        const cleanMessage: Message = {
+            _id: message._id ? message._id.toString() : undefined, // Convert ObjectId to string
+            senderId: message.senderId,
+            receiverId: message.receiverId,
+            content: message.content, // Use the decrypted content
+            isRead: message.isRead || false, // Default to false if undefined
+            createdAt: message.createdAt ? new Date(message.createdAt) : new Date(), // Ensure Date object
+            updatedAt: message.updatedAt ? new Date(message.updatedAt) : new Date(), // Ensure Date object
+        };
+
+        setLocalMessages(prev => [...prev, cleanMessage]);
+
+      } else {
+        console.log('Message is not for the selected chat. Ignoring.', message);
+      }
+    };
+
+    socket.on('newMessage', handleNewMessage);
+
+    return () => {
+      console.log('Cleaning up newMessage event listener.');
+      socket.off('newMessage', handleNewMessage);
+    };
+  }, [socket, currentUser?._id, selectedUser?._id]);
+
+  // Scroll to bottom when local messages change
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [localMessages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleSendMessage = () => {
-    if (messageInput.trim() && selectedUser && !sendMessageMutation.isPending) {
-      sendMessageMutation.mutate(messageInput.trim());
+    if (messageInput.trim() && selectedUser) {
+      sendMessage({
+        receiverId: selectedUser._id.toString(),
+        content: messageInput.trim()
+      });
+      setMessageInput("");
+      setShowEmojiPicker(false);
     }
   };
 
@@ -59,6 +127,85 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
+    }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      console.log('Selected file:', files[0].name);
+      // Implement file upload logic here later
+    }
+    event.target.value = '';
+  };
+
+  const handlePaperclipClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleEmojiClick = (emojiData: EmojiClickData) => {
+    setMessageInput(prevMsgInput => prevMsgInput + emojiData.emoji);
+    // Optionally hide the picker after selecting an emoji
+    // setShowEmojiPicker(false);
+  };
+
+  const handleSmileClick = () => {
+    setShowEmojiPicker(!showEmojiPicker);
+  };
+
+  const handleMessageSelect = (messageId: string | undefined) => {
+    if (!messageId) return;
+
+    setSelectedMessageIds(prevSelected => {
+      const newSelected = new Set(prevSelected);
+      if (newSelected.has(messageId)) {
+        newSelected.delete(messageId);
+      } else {
+        newSelected.add(messageId);
+      }
+      return newSelected;
+    });
+  };
+
+  const handleDeleteMessages = async () => {
+    if (selectedMessageIds.size === 0) return;
+
+    // In a real application, you would confirm with the user before deleting
+    if (!window.confirm(`Are you sure you want to delete ${selectedMessageIds.size} message(s)?`)) {
+      return; // User cancelled deletion
+    }
+
+    console.log('Attempting to delete messages with IDs:', selectedMessageIds); // Log message IDs to be deleted
+
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messageIds: Array.from(selectedMessageIds) }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Failed to delete messages:', errorData);
+        // Optionally show an error message to the user
+        alert(`Failed to delete messages: ${errorData.message || response.statusText}`);
+        return;
+      }
+
+      // Upon successful deletion, update local state and clear selection
+      console.log('Messages deleted successfully from server.');
+      // Use functional update to ensure we have the latest state
+      setLocalMessages(prevMessages =>
+        prevMessages.filter(msg => msg._id && !selectedMessageIds.has(msg._id))
+      );
+      setSelectedMessageIds(new Set());
+
+    } catch (error) {
+      console.error('Error during message deletion API call:', error);
+      // Optionally show an error message to the user
+      alert('An error occurred while trying to delete messages.');
     }
   };
 
@@ -91,7 +238,7 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
   return (
     <div className="flex-1 flex flex-col">
       {/* Chat Header */}
-      <div className="glass-effect border-b border-border/20 p-4">
+      <div className="glass-effect border-b border-border/20 p-4 flex-shrink-0 h-16">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <Avatar className="w-10 h-10">
@@ -116,6 +263,11 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {selectedMessageIds.size > 0 && (
+               <Button variant="ghost" size="icon" className="hover:bg-accent text-red-500" onClick={handleDeleteMessages}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="icon" className="hover:bg-accent">
               <Phone className="h-4 w-4" />
             </Button>
@@ -133,30 +285,32 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
         {isLoading ? (
           <div className="text-center text-muted-foreground">Loading messages...</div>
-        ) : messages.length === 0 ? (
+        ) : localMessages.length === 0 ? (
           <div className="text-center text-muted-foreground">
             No messages yet. Start the conversation!
           </div>
         ) : (
-          messages.map((message) => {
-            const isOwnMessage = message.senderId === currentUser?.id;
+          localMessages.map((message: Message) => {
+            const isOwnMessage = message.senderId === currentUser?._id?.toString();
+            const isSelected = message._id ? selectedMessageIds.has(message._id) : false;
             return (
               <div
-                key={message.id}
+                key={message._id?.toString() || Math.random().toString()}
                 className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`message-bubble rounded-2xl px-4 py-2 ${
+                  className={`message-bubble rounded-2xl px-4 py-2 cursor-pointer ${
                     isOwnMessage
                       ? 'bg-gradient-to-r from-primary to-primary/90 text-primary-foreground rounded-br-md'
                       : 'bg-accent text-accent-foreground rounded-bl-md'
-                  }`}
+                  } ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
+                  onClick={() => handleMessageSelect(message._id)}
                 >
                   <p className="whitespace-pre-wrap">{message.content}</p>
                   <p className={`text-xs mt-1 ${
                     isOwnMessage ? 'text-primary-foreground/70' : 'text-muted-foreground'
                   }`}>
-                    {format(new Date(message.timestamp), 'h:mm a')}
+                    {format(new Date(message.createdAt || new Date()), 'h:mm a')}
                   </p>
                 </div>
               </div>
@@ -180,10 +334,23 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
         <div ref={messagesEndRef} />
       </div>
       
+      {/* Emoji Picker */}
+      {showEmojiPicker && (
+        <div className="border-t border-border/20 flex-shrink-0">
+          <EmojiPicker onEmojiClick={handleEmojiClick} width="100%" />
+        </div>
+      )}
+      
       {/* Message Input */}
-      <div className="glass-effect border-t border-border/20 p-4">
+      <div className="glass-effect border-t border-border/20 p-4 flex-shrink-0 h-20">
         <div className="flex items-center space-x-3">
-          <Button variant="ghost" size="icon" className="hover:bg-accent">
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileSelect}
+          />
+          <Button variant="ghost" size="icon" className="hover:bg-accent" onClick={handlePaperclipClick}>
             <Paperclip className="h-4 w-4 text-muted-foreground" />
           </Button>
           <div className="flex-1 relative">
@@ -194,19 +361,19 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
               onChange={(e) => setMessageInput(e.target.value)}
               onKeyPress={handleKeyPress}
               className="bg-accent border-border/50 focus:border-primary rounded-2xl pr-12"
-              disabled={sendMessageMutation.isPending}
             />
             <Button 
               variant="ghost" 
               size="icon" 
               className="absolute right-3 top-1/2 transform -translate-y-1/2 hover:bg-accent/50"
+              onClick={handleSmileClick}
             >
-              <Smile className="h-4 w-4 text-muted-foreground" />
+              <Smile className="h-4 w-4" />
             </Button>
           </div>
           <Button
             onClick={handleSendMessage}
-            disabled={!messageInput.trim() || sendMessageMutation.isPending}
+            disabled={!messageInput.trim()}
             className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary rounded-xl transition-all transform hover:scale-105"
           >
             <Send className="h-4 w-4" />

@@ -11,6 +11,7 @@ import { Camera, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useRef } from "react";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -28,6 +29,9 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     bio: user?.bio || "",
     status: user?.status || "online",
   });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const updateProfileMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
@@ -51,9 +55,57 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     },
   });
 
+  const uploadProfilePictureMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append('profilePicture', file);
+      
+      const response = await fetch('/api/upload/profile-picture', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to upload profile picture');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      console.log('Upload successful:', data);
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      toast({
+        title: "Profile Picture Uploaded",
+        description: "Your profile picture has been updated.",
+      });
+      setSelectedFile(null);
+    },
+    onError: (error: any) => {
+      console.error('Upload error:', error);
+      toast({
+        title: "Upload Failed",
+        description: error.message || "Failed to upload profile picture.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     updateProfileMutation.mutate(formData);
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      setSelectedFile(files[0]);
+    }
+  };
+
+  const handleCameraClick = () => {
+    fileInputRef.current?.click();
   };
 
   const getDisplayName = () => {
@@ -84,21 +136,49 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
           <div className="relative inline-block">
             <Avatar className="w-24 h-24">
               <AvatarImage 
-                src={user?.profileImageUrl || undefined} 
+                src={selectedFile ? URL.createObjectURL(selectedFile) : user?.profileImageUrl || undefined}
                 alt={getDisplayName()} 
               />
               <AvatarFallback className="bg-primary/10 text-primary text-lg">
                 {getInitials()}
               </AvatarFallback>
             </Avatar>
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept="image/*"
+              onChange={handleFileChange}
+            />
             <Button
               variant="outline"
               size="icon"
               className="absolute bottom-0 right-0 bg-primary hover:bg-primary/90 border-background"
+              onClick={handleCameraClick}
             >
               <Camera className="h-4 w-4 text-primary-foreground" />
             </Button>
           </div>
+          {selectedFile && (
+            <div className="mt-3 flex items-center justify-center space-x-2">
+              <span className="text-sm text-muted-foreground">{selectedFile.name}</span>
+              <Button
+                size="sm"
+                onClick={() => uploadProfilePictureMutation.mutate(selectedFile)}
+                disabled={uploadProfilePictureMutation.isPending}
+              >
+                {uploadProfilePictureMutation.isPending ? "Uploading..." : "Upload Photo"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedFile(null)}
+                disabled={uploadProfilePictureMutation.isPending}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-4">

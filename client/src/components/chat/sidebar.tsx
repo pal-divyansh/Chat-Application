@@ -14,28 +14,18 @@ interface SidebarProps {
   onShowProfile: () => void;
 }
 
-interface Conversation {
-  user: UserType;
-  lastMessage: {
-    content: string;
-    timestamp: string;
-    senderId: string;
-  } | null;
-  unreadCount: number;
-}
-
 export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data: conversations = [], isLoading } = useQuery<Conversation[]>({
-    queryKey: ["/api/conversations"],
+  const { data: users = [], isLoading } = useQuery<UserType[]>({
+    queryKey: ["/api/chats"],
     refetchInterval: 5000, // Refresh every 5 seconds for real-time updates
   });
 
-  const filteredConversations = conversations.filter(conv =>
-    conv.user.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    conv.user.lastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    conv.user.username?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredUsers = users.filter(user =>
+    user.firstName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    user.lastName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    user.username?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleLogout = async () => {
@@ -103,55 +93,40 @@ export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: S
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {isLoading ? (
           <div className="p-4 text-center text-muted-foreground">
-            Loading conversations...
+            Loading users...
           </div>
-        ) : filteredConversations.length === 0 ? (
+        ) : filteredUsers.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground">
-            {searchQuery ? "No users found" : "No conversations yet"}
+            {searchQuery ? "No users found" : "No other users found"}
           </div>
         ) : (
-          filteredConversations.map((conversation) => (
+          filteredUsers.map((user) => (
             <div
-              key={conversation.user.id}
-              onClick={() => onSelectUser(conversation.user)}
+              key={user._id.toString()}
+              onClick={() => onSelectUser(user)}
               className={`p-4 hover:bg-accent cursor-pointer border-b border-border/10 transition-colors ${
-                selectedUser?.id === conversation.user.id ? 'bg-accent' : ''
+                selectedUser?._id?.toString() === user._id.toString() ? 'bg-accent' : ''
               }`}
             >
               <div className="flex items-center space-x-3">
                 <div className="relative">
                   <Avatar className="w-12 h-12">
                     <AvatarImage 
-                      src={conversation.user.profileImageUrl || undefined} 
-                      alt={getDisplayName(conversation.user)} 
+                      src={user.profileImageUrl || undefined} 
+                      alt={getDisplayName(user)} 
                     />
                     <AvatarFallback className="bg-primary/10 text-primary">
-                      {getInitials(conversation.user)}
+                      {getInitials(user)}
                     </AvatarFallback>
                   </Avatar>
                   <div className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-background rounded-full ${
-                    conversation.user.status === 'online' ? 'bg-green-500' : 'bg-gray-500'
+                    user.status === 'online' ? 'bg-green-500' : 'bg-gray-500'
                   }`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-medium truncate text-foreground">
-                    {getDisplayName(conversation.user)}
+                    {getDisplayName(user)}
                   </h3>
-                  <p className="text-sm text-muted-foreground truncate">
-                    {conversation.lastMessage?.content || "No messages yet"}
-                  </p>
-                </div>
-                <div className="text-right">
-                  {conversation.lastMessage && (
-                    <p className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(conversation.lastMessage.timestamp), { addSuffix: false })}
-                    </p>
-                  )}
-                  {conversation.unreadCount > 0 && (
-                    <Badge className="bg-primary text-primary-foreground mt-1">
-                      {conversation.unreadCount}
-                    </Badge>
-                  )}
                 </div>
               </div>
             </div>

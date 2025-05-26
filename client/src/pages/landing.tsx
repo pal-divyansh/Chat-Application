@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageCircle, UserPlus, LogIn } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+const API_URL = '/api'; // Use relative URL to work with Vite proxy
 
 export default function Landing() {
   const [loginUsername, setLoginUsername] = useState("");
@@ -17,22 +20,58 @@ export default function Landing() {
   const [lastName, setLastName] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [location, setLocation] = useLocation();
 
   const loginMutation = useMutation({
-    mutationFn: async (data: { username: string; password: string }) => {
-      return await apiRequest("POST", "/api/login", data);
+    mutationFn: async (credentials: { username: string; password: string }) => {
+      const response = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(credentials),
+      });
+
+      const contentType = response.headers.get('content-type');
+      
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON login response:', text);
+        throw new Error('Invalid server response');
+      }
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+      
+      return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    onSuccess: async (data) => {
+      // Update the auth state with the user data
+      queryClient.setQueryData(['auth/user'], data.user || data);
+      
       toast({
-        title: "Welcome back!",
+        title: "Welcome!",
         description: "You've successfully logged in.",
       });
+      
+      // Wait for the auth state to be updated
+      await queryClient.invalidateQueries({ queryKey: ['auth/user'] });
+      
+      // Add a small delay to ensure state is updated
+      setTimeout(() => {
+        setLocation('/');
+      }, 100);
     },
     onError: (error: any) => {
+      console.error("Login error:", error);
       toast({
         title: "Login failed",
-        description: error.message || "Username not found. Try signing up instead.",
+        description: error.message || "Invalid username or password. Please try again.",
         variant: "destructive",
       });
     },
@@ -40,14 +79,24 @@ export default function Landing() {
 
   const signupMutation = useMutation({
     mutationFn: async (data: { username: string; password: string; firstName?: string; lastName?: string }) => {
-      return await apiRequest("POST", "/api/signup", data);
+      return await apiRequest("POST", `${API_URL}/signup`, data);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    onSuccess: async (data) => {
+      // Update the auth state with the user data
+      queryClient.setQueryData(['auth/user'], data.user || data);
+      
       toast({
         title: "Welcome!",
         description: "Account created successfully. You're now logged in.",
       });
+      
+      // Wait for the auth state to be updated
+      await queryClient.invalidateQueries({ queryKey: ['auth/user'] });
+      
+      // Add a small delay to ensure state is updated
+      setTimeout(() => {
+        setLocation('/');
+      }, 100);
     },
     onError: (error: any) => {
       toast({
