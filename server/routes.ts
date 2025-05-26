@@ -25,7 +25,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/users', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const users = await storage.getAllUsers(userId);
+      // Include all users including self for testing purposes
+      const users = await storage.getAllUsers();
       res.json(users);
     } catch (error) {
       console.error("Error fetching users:", error);
@@ -96,7 +97,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/conversations', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const users = await storage.getAllUsers(userId);
+      // Include all users for conversations (including self for testing)
+      const users = await storage.getAllUsers();
       
       // Get last message and unread count for each user
       const conversations = await Promise.all(
@@ -120,7 +122,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!a.lastMessage && !b.lastMessage) return 0;
         if (!a.lastMessage) return 1;
         if (!b.lastMessage) return -1;
-        return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
+        const aTime = a.lastMessage.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0;
+        const bTime = b.lastMessage.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0;
+        return bTime - aTime;
       });
       
       res.json(conversations);

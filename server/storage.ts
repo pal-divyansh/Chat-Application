@@ -8,7 +8,7 @@ import {
   type UpdateUser,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, or, and, desc } from "drizzle-orm";
+import { eq, or, and, desc, not } from "drizzle-orm";
 
 // Interface for storage operations
 export interface IStorage {
@@ -61,11 +61,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllUsers(excludeId?: string): Promise<User[]> {
-    const query = db.select().from(users);
     if (excludeId) {
-      return await query.where(eq(users.id, excludeId) === false);
+      return await db.select().from(users).where(not(eq(users.id, excludeId)));
     }
-    return await query;
+    return await db.select().from(users);
   }
 
   // Message operations
