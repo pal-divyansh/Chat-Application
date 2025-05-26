@@ -18,6 +18,9 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    include: ['emoji-picker-react']
+  },
   server: {
     port: 3000,
     proxy: {
