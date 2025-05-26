@@ -24,10 +24,11 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)],
 );
 
-// User storage table for anonymous users
+// User storage table with password authentication
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().notNull(),
   username: varchar("username").unique().notNull(),
+  password: varchar("password").notNull(),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),

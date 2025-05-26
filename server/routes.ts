@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertMessageSchema, updateUserSchema, insertUserSchema } from "@shared/schema";
 import { encrypt, decrypt } from "../client/src/lib/encryption";
 import { nanoid } from "nanoid";
+import bcrypt from "bcrypt";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Simple session middleware to track current user
@@ -17,9 +18,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Login route - existing users only
   app.post('/api/login', async (req: any, res) => {
     try {
-      const { username } = req.body;
+      const { username, password } = req.body;
       if (!username || username.trim().length < 2) {
         return res.status(400).json({ message: "Username must be at least 2 characters" });
+      }
+      if (!password || password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
       }
 
       const user = await storage.getUserByUsername(username.trim());
@@ -27,8 +31,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Username not found. Please sign up first." });
       }
 
+      // Verify password
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        return res.status(401).json({ message: "Invalid password" });
+      }
+
       req.session.userId = user.id;
-      res.json(user);
+      
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
     } catch (error) {
       console.error("Error during login:", error);
       res.status(500).json({ message: "Login failed" });
@@ -38,9 +51,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Signup route - new users only
   app.post('/api/signup', async (req: any, res) => {
     try {
-      const { username, firstName, lastName } = req.body;
+      const { username, password, firstName, lastName } = req.body;
       if (!username || username.trim().length < 2) {
         return res.status(400).json({ message: "Username must be at least 2 characters" });
+      }
+      if (!password || password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
       }
 
       // Check if username already exists
@@ -49,16 +65,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(409).json({ message: "Username already exists. Please choose a different one or login." });
       }
 
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
       const user = await storage.createUser({
         id: nanoid(),
         username: username.trim(),
+        password: hashedPassword,
         firstName: firstName?.trim() || null,
         lastName: lastName?.trim() || null,
         status: "online",
       });
 
       req.session.userId = user.id;
-      res.json(user);
+      
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
     } catch (error) {
       console.error("Error during signup:", error);
       res.status(500).json({ message: "Signup failed" });

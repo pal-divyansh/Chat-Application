@@ -10,15 +10,17 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function Landing() {
   const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const loginMutation = useMutation({
-    mutationFn: async (username: string) => {
-      return await apiRequest("POST", "/api/login", { username });
+    mutationFn: async (data: { username: string; password: string }) => {
+      return await apiRequest("POST", "/api/login", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
@@ -37,7 +39,7 @@ export default function Landing() {
   });
 
   const signupMutation = useMutation({
-    mutationFn: async (data: { username: string; firstName?: string; lastName?: string }) => {
+    mutationFn: async (data: { username: string; password: string; firstName?: string; lastName?: string }) => {
       return await apiRequest("POST", "/api/signup", data);
     },
     onSuccess: () => {
@@ -66,7 +68,18 @@ export default function Landing() {
       });
       return;
     }
-    loginMutation.mutate(loginUsername.trim());
+    if (loginPassword.length < 6) {
+      toast({
+        title: "Invalid password",
+        description: "Password must be at least 6 characters long.",
+        variant: "destructive",
+      });
+      return;
+    }
+    loginMutation.mutate({
+      username: loginUsername.trim(),
+      password: loginPassword,
+    });
   };
 
   const handleSignup = (e: React.FormEvent) => {
@@ -79,8 +92,17 @@ export default function Landing() {
       });
       return;
     }
+    if (signupPassword.length < 6) {
+      toast({
+        title: "Invalid password",
+        description: "Password must be at least 6 characters long.",
+        variant: "destructive",
+      });
+      return;
+    }
     signupMutation.mutate({
       username: signupUsername.trim(),
+      password: signupPassword,
       firstName: firstName.trim() || undefined,
       lastName: lastName.trim() || undefined,
     });
@@ -132,9 +154,20 @@ export default function Landing() {
                     />
                   </div>
                   
+                  <div>
+                    <Input
+                      type="password"
+                      placeholder="Enter your password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      className="bg-accent border-border/50 focus:border-primary text-lg py-3"
+                      disabled={loginMutation.isPending}
+                    />
+                  </div>
+                  
                   <Button 
                     type="submit"
-                    disabled={!loginUsername.trim() || loginMutation.isPending}
+                    disabled={!loginUsername.trim() || !loginPassword || loginMutation.isPending}
                     className="w-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary py-3 rounded-xl font-semibold transition-all transform hover:scale-[1.02]"
                   >
                     {loginMutation.isPending ? "Logging in..." : "Login"}
@@ -143,7 +176,7 @@ export default function Landing() {
                 
                 <div className="mt-4 text-center">
                   <p className="text-muted-foreground text-sm">
-                    Already have an account? Enter your username to continue.
+                    Already have an account? Enter your credentials to continue.
                   </p>
                 </div>
               </TabsContent>
@@ -156,6 +189,17 @@ export default function Landing() {
                       placeholder="Choose a username"
                       value={signupUsername}
                       onChange={(e) => setSignupUsername(e.target.value)}
+                      className="bg-accent border-border/50 focus:border-primary text-lg py-3"
+                      disabled={signupMutation.isPending}
+                    />
+                  </div>
+                  
+                  <div>
+                    <Input
+                      type="password"
+                      placeholder="Create a password (min 6 characters)"
+                      value={signupPassword}
+                      onChange={(e) => setSignupPassword(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary text-lg py-3"
                       disabled={signupMutation.isPending}
                     />
@@ -182,7 +226,7 @@ export default function Landing() {
                   
                   <Button 
                     type="submit"
-                    disabled={!signupUsername.trim() || signupMutation.isPending}
+                    disabled={!signupUsername.trim() || !signupPassword || signupMutation.isPending}
                     className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 py-3 rounded-xl font-semibold transition-all transform hover:scale-[1.02]"
                   >
                     {signupMutation.isPending ? "Creating account..." : "Create Account"}
@@ -191,7 +235,7 @@ export default function Landing() {
                 
                 <div className="mt-4 text-center">
                   <p className="text-muted-foreground text-sm">
-                    New to ChatFlow? Create your account and start chatting!
+                    New to ChatFlow? Create your secure account and start chatting!
                   </p>
                 </div>
               </TabsContent>
