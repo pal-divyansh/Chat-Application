@@ -256,6 +256,9 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
 
   router.put('/user', auth, async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
       const { firstName, lastName, bio, status } = req.body;
       const updatedUser = await storage.updateUser(req.user._id, {
         firstName,

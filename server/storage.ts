@@ -66,7 +66,7 @@ export class DatabaseStorage {
   async getUnreadMessageCount(userId: string, fromUserId: string): Promise<number> {
     return await MessageModel.countDocuments({
       senderId: fromUserId,
-      receiverId: userId,
+      chatId: { $regex: `.*${userId}.*` },
       isRead: false
     }).exec();
   }
