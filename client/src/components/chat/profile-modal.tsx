@@ -27,7 +27,7 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     firstName: user?.firstName || "",
     lastName: user?.lastName || "",
     bio: user?.bio || "",
-    status: user?.status || "online",
+    status: (user?.status || "online") as "online" | "offline" | "away"
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -241,7 +241,9 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
             </Label>
             <Select
               value={formData.status}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, status: value }))}
+              onValueChange={(value: "online" | "offline" | "away") => 
+                setFormData(prev => ({ ...prev, status: value }))
+              }
             >
               <SelectTrigger className="bg-accent border-border/50 focus:border-primary">
                 <SelectValue />

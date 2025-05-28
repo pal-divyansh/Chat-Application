@@ -10,9 +10,9 @@ import type { Socket } from "socket.io";
 import multer from 'multer';
 import path from 'path';
 import session from 'express-session'; // Import session type for middleware
-import express from 'express';
+import express, { Router } from 'express';
 import { User, Message, InsertMessage, UpdateUser } from '@shared/schema';
-import { authenticateToken } from './auth';
+import { authenticateToken } from './middleware/auth';
 import jwt from 'jsonwebtoken';
 
 // Set up multer storage
@@ -36,7 +36,7 @@ const storageConfig = multer.diskStorage({
 
 const upload = multer({ storage: storageConfig });
 
-const router = express.Router();
+const router = Router();
 
 export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   const httpServer = createServer(app);
@@ -273,30 +273,33 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   });
 
   // Message routes
-  router.post('/messages', auth, async (req, res) => {
+  router.post('/messages', authenticateToken, async (req, res) => {
     try {
-      const { chatId, content } = req.body;
+      if (!req.user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      const { content, chatId } = req.body;
       const message = await storage.createMessage({
+        content,
         chatId,
         senderId: req.user._id,
-        content,
-        isRead: false,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        isRead: false
       });
-
-      res.json({ message });
+      res.status(201).json(message);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      res.status(500).json({ error: 'Failed to create message' });
     }
   });
 
-  router.get('/messages/:chatId', auth, async (req, res) => {
+  router.get('/messages/:chatId', authenticateToken, async (req, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
       const messages = await storage.getMessagesByChatId(req.params.chatId);
-      res.json({ messages });
+      res.json(messages);
     } catch (error) {
-      res.status(500).json({ message: 'Server error' });
+      res.status(500).json({ error: 'Failed to fetch messages' });
     }
   });
 

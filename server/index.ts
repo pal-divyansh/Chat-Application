@@ -2,13 +2,16 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { setupVite, serveStatic } from "./vite";
 import { connectDB } from "./db";
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 import { createServer } from 'http';
-import { setupWebSocket } from './websocket';
+import { Server } from 'socket.io';
+import { setupSocketHandlers } from './socket';
+import { storage } from './storage';
+import { logger } from './utils/logger';
 
 // Define __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -86,7 +89,7 @@ app.use((req, res, next) => {
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    log(`${req.method} ${path} - ${res.statusCode} - ${duration}ms`);
+    logger.info(`${req.method} ${path} - ${res.statusCode} - ${duration}ms`);
   });
 
   next();
@@ -100,7 +103,24 @@ async function startServer() {
     await connectDB();
     
     // Set up WebSocket server with session middleware
-    setupWebSocket(httpServer, sessionMiddleware);
+    const io = new Server(httpServer, {
+      cors: {
+        origin: process.env.CLIENT_URL || 'http://localhost:5174',
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+        allowedHeaders: [
+          'Content-Type', 
+          'Authorization', 
+          'Accept',
+          'Cache-Control',
+          'X-Requested-With'
+        ],
+        exposedHeaders: ['Set-Cookie'],
+        maxAge: 86400 // 24 hours
+      }
+    });
+    
+    setupSocketHandlers(io, sessionMiddleware);
     
     // Then set up Vite
     await setupVite(app, httpServer);

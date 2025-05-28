@@ -72,13 +72,19 @@ export class DatabaseStorage {
   }
 
   async getLastMessageBetweenUsers(userId1: string, userId2: string): Promise<Message | null> {
-    const message = await MessageModel.findOne({
-      $or: [
-        { senderId: userId1, receiverId: userId2 },
-        { senderId: userId2, receiverId: userId1 }
-      ]
-    }).sort({ createdAt: -1 }).lean().exec();
-    return message ? this.mapMessageToClient(message) : null;
+    try {
+      const message = await MessageModel.findOne({
+        $or: [
+          { senderId: userId1, receiverId: userId2 },
+          { senderId: userId2, receiverId: userId1 }
+        ]
+      }).sort({ createdAt: -1 });
+      
+      return message ? this.mapMessageToClient(message) : null;
+    } catch (error) {
+      console.error('Error getting last message:', error);
+      return null;
+    }
   }
 
   async searchUsers(query: string, excludeId: string): Promise<User[]> {
