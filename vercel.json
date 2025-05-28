@@ -2,28 +2,33 @@
   "version": 2,
   "builds": [
     {
-      "src": "server/index.ts",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "package.json",
+      "src": "SecureMessenger/client/package.json",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "dist"
       }
+    },
+    {
+      "src": "SecureMessenger/server/index.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "server/index.ts"
+      "dest": "SecureMessenger/server/index.ts"
+    },
+    {
+      "src": "/socket.io/(.*)",
+      "dest": "SecureMessenger/server/index.ts"
+    },
+    {
+      "src": "/",
+      "dest": "SecureMessenger/client/dist/index.html"
     },
     {
       "src": "/(.*)",
-      "dest": "/dist/$1"
+      "dest": "SecureMessenger/client/dist/$1"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 } 
