@@ -67,8 +67,7 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
       console.log(`[Socket] Received sendMessage event from ${socket.id}`, message);
 
       try {
-        // The senderId should come from the authenticated user's session associated with the socket
-        const senderId = (socket as any).request.session.userId; 
+        const senderId = (socket as any).request.session.userId;
         const { chatId, content } = message;
         
         if (!senderId) {
@@ -90,31 +89,27 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
           socketId: socket.id
         });
 
-        // Encrypt message content
         console.log(`[Socket] Encrypting message...`);
         const encryptedContent = encrypt(content);
         console.log(`[Socket] Message encrypted successfully`);
         
-        // Save message to database
         console.log(`[Socket] Attempting to save message to database...`);
         try {
           console.log(`[Socket] Calling storage.createMessage with:`, { chatId, senderId, content: '<encrypted>', isRead: false });
           const createdMessage = await storage.createMessage({
-            chatId: chatId,
-            senderId: senderId,
+            chatId,
+            senderId,
             content: encryptedContent,
             isRead: false
           });
           console.log(`[Socket] Message saved successfully by storage:`, { messageId: createdMessage._id, chatId: createdMessage.chatId });
 
-          // Decrypt message for sending
           const decryptedMessage = {
             ...createdMessage,
-            content: decrypt(createdMessage.content) // Use createdMessage.content which is encrypted here
+            content: decrypt(createdMessage.content)
           };
           console.log(`[Socket] Message decrypted for emission`);
 
-          // Emit the new message to all users in the chat room (identified by chatId)
           console.log(`[Socket] Emitting newMessage to chat room ${chatId}...`);
           io.to(chatId).emit('newMessage', decryptedMessage);
 
@@ -125,9 +120,8 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
             message: dbError instanceof Error ? dbError.message : 'Unknown error',
             stack: dbError instanceof Error ? dbError.stack : undefined
           });
-          socket.emit('error', { message: 'Failed to save message' }); // Emit error to client
+          socket.emit('error', { message: 'Failed to save message' });
         }
-
       } catch (error) {
         console.error(`[Socket] Error handling sendMessage event:`, error);
         socket.emit('error', { message: 'Failed to process message' });
@@ -173,13 +167,13 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   router.post('/login', async (req, res) => {
     try {
       const { username, password } = req.body;
-      const user = await storage.getUserByUsername(username);
+      const user = await storage.getUserByUsername(username) as any;
 
       if (!user) {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-      const isValidPassword = await bcrypt.compare(password, (user as any).password);
+      const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
