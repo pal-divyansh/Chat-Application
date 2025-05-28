@@ -92,9 +92,19 @@ export default function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateProfileMutation.mutate(formData);
+    try {
+      await updateProfileMutation.mutateAsync({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        bio: formData.bio,
+        status: formData.status as 'online' | 'offline' | 'away'
+      });
+      onClose();
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+    }
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {

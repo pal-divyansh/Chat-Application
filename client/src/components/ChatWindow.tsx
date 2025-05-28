@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useMessages } from '../hooks/useMessages';
 import { useAuth } from '../hooks/useAuth';
 import { format } from 'date-fns';
-import { MessageWithUser, User } from '@shared/schema';
+import { User } from '@shared/schema';
 
 interface ChatWindowProps {
   chatId: string;
@@ -12,7 +12,6 @@ interface ChatWindowProps {
 export function ChatWindow({ chatId, recipientName }: ChatWindowProps) {
   const [message, setMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  console.log('ChatWindow chatId:', chatId);
   const { messages, isLoading, error, sendMessage } = useMessages(chatId);
   const { user } = useAuth();
 
@@ -47,19 +46,19 @@ export function ChatWindow({ chatId, recipientName }: ChatWindowProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages?.map((msg: MessageWithUser) => (
+        {messages?.map((msg) => (
           <div
             key={msg._id}
-            className={`flex ${msg.senderId === user?._id ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${msg.sender._id === user?._id ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-[70%] rounded-lg p-3 ${
-                msg.senderId === user?._id
+                msg.sender._id === user?._id
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-200 text-gray-800'
               }`}
             >
-              {msg.senderId !== user?._id && (
+              {msg.sender._id !== user?._id && (
                 <div className="text-xs text-gray-500 mb-1">{msg.sender.username}</div>
               )}
               <div>{msg.content}</div>

@@ -1,7 +1,5 @@
 import { UserModel, MessageModel, type User, type Message, type InsertMessage, type UpdateUser } from "@shared/schema";
 import mongoose from 'mongoose';
-import { decrypt } from '../client/src/lib/encryption';
-import { User } from '@shared/schema'; // Ensure User type is imported if needed
 
 export class DatabaseStorage {
   // User operations
@@ -37,8 +35,6 @@ export class DatabaseStorage {
     const users = await query.lean().exec();
     return users.map(user => this.mapUserToClient(user));
   }
-
-  // Chat operations
 
   // Message operations
   async createMessage(messageData: InsertMessage): Promise<Message> {
@@ -99,7 +95,6 @@ export class DatabaseStorage {
   }
 
   async getUserChats(userId: string): Promise<Array<{ user: User; lastMessage: Message | null }>> {
-    // Get all unique user IDs that the current user has chatted with
     const userMessages = await MessageModel.find({
       $or: [
         { senderId: userId },
@@ -117,7 +112,6 @@ export class DatabaseStorage {
       }
     });
 
-    // Get user details and their last message
     const chats = await Promise.all(
       Array.from(chatUserIds).map(async (otherUserId) => {
         const user = await this.getUser(otherUserId);
