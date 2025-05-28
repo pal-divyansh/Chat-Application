@@ -179,7 +179,7 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-      const isValidPassword = await bcrypt.compare(password, user.password);
+      const isValidPassword = await bcrypt.compare(password, (user as any).password);
       if (!isValidPassword) {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
@@ -215,12 +215,12 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
       const hashedPassword = await bcrypt.hash(password, 10);
       const user = await storage.createUser({
         username,
-        password: hashedPassword,
         firstName,
         lastName,
         status: 'offline',
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        password: hashedPassword // This will be handled by the storage layer
       });
 
       const token = jwt.sign(
