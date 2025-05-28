@@ -104,14 +104,14 @@ export class DatabaseStorage {
     const userMessages = await MessageModel.find({
       $or: [
         { senderId: userId },
-        { receiverId: userId }
+        { chatId: { $regex: `.*${userId}.*` } }
       ]
     }).lean().exec();
 
     const chatUserIds = new Set<string>();
     userMessages.forEach(msg => {
       const otherUserId = msg.senderId.toString() === userId ? 
-        msg.receiverId.toString() : 
+        msg.chatId.split('-').find(id => id !== userId) : 
         msg.senderId.toString();
       if (otherUserId) {
         chatUserIds.add(otherUserId);
