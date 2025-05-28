@@ -75,8 +75,8 @@ export class DatabaseStorage {
     try {
       const message = await MessageModel.findOne({
         $or: [
-          { senderId: userId1, chatId: { $regex: userId2 } },
-          { senderId: userId2, chatId: { $regex: userId1 } }
+          { senderId: userId1, chatId: { $regex: `.*${userId2}.*` } },
+          { senderId: userId2, chatId: { $regex: `.*${userId1}.*` } }
         ]
       }).sort({ createdAt: -1 });
       

@@ -213,15 +213,17 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({
+      const userData = {
         username,
         firstName,
         lastName,
         status: 'offline',
         createdAt: new Date(),
         updatedAt: new Date(),
-        password: hashedPassword // This will be handled by the storage layer
-      });
+        password: hashedPassword
+      };
+
+      const user = await storage.createUser(userData as any); // Type assertion needed for password
 
       const token = jwt.sign(
         { userId: user._id },

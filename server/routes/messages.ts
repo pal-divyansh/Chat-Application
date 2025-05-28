@@ -1,45 +1,38 @@
 import { Router } from 'express';
-import { Message } from '../models/Message';
-import { isAuthenticated } from '../middleware/auth';
+import { storage } from '../storage';
+import { authenticateToken } from '../middleware/auth';
 
 const router = Router();
 
 // Get messages for a chat
-router.get('/:chatId', isAuthenticated, async (req, res) => {
+router.get('/:chatId', authenticateToken, async (req, res) => {
   try {
-    const { chatId } = req.params;
-    const messages = await Message.find({ chatId })
-      .sort({ createdAt: 1 })
-      .populate('sender', 'username profileImageUrl')
-      .lean();
-
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const messages = await storage.getMessagesByChatId(req.params.chatId);
     res.json(messages);
   } catch (error) {
-    console.error('Error fetching messages:', error);
-    res.status(500).json({ message: 'Error fetching messages' });
+    res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
 
-// Send a new message
-router.post('/', isAuthenticated, async (req, res) => {
+// Send a message
+router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { chatId, content, type = 'text' } = req.body;
-    const senderId = req.session.userId;
-
-    const message = new Message({
-      chatId,
-      sender: senderId,
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { content, chatId } = req.body;
+    const message = await storage.createMessage({
       content,
-      type
+      chatId,
+      senderId: req.user._id,
+      isRead: false
     });
-
-    await message.save();
-    await message.populate('sender', 'username profileImageUrl');
-
     res.status(201).json(message);
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ message: 'Error sending message' });
+    res.status(500).json({ error: 'Failed to create message' });
   }
 });
 
