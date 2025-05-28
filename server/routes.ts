@@ -10,6 +10,9 @@ import type { Socket } from "socket.io";
 import multer from 'multer';
 import path from 'path';
 import session from 'express-session'; // Import session type for middleware
+import express from 'express';
+import { User, Message, InsertMessage, UpdateUser } from '@shared/schema';
+import { authenticateToken } from './auth';
 
 // Set up multer storage
 const storageConfig = multer.diskStorage({
@@ -31,6 +34,8 @@ const storageConfig = multer.diskStorage({
 });
 
 const upload = multer({ storage: storageConfig });
+
+const router = express.Router();
 
 export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   const httpServer = createServer(app);
@@ -301,26 +306,57 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   };
 
   // User routes
-  app.get('/api/users', requireAuth, async (req: any, res) => {
+  router.get('/users', requireAuth, async (req, res) => {
     try {
-      const userId = req.session.userId;
-      const users = await storage.getAllUsers(userId);
+      const users = await storage.getAllUsers(req.user?._id);
       res.json(users);
     } catch (error) {
-      console.error("Error fetching users:", error);
-      res.status(500).json({ message: "Failed to fetch users" });
+      console.error('Error fetching users:', error);
+      res.status(500).json({ error: 'Failed to fetch users' });
     }
   });
 
-  app.patch('/api/users/profile', requireAuth, async (req: any, res) => {
+  router.get('/users/search', requireAuth, async (req, res) => {
     try {
-      const userId = req.session.userId;
-      const updates = updateUserSchema.parse(req.body);
-      const user = await storage.updateUser(userId, updates);
+      const { query } = req.query;
+      if (!query || typeof query !== 'string') {
+        return res.status(400).json({ error: 'Search query is required' });
+      }
+      const users = await storage.searchUsers(query, req.user?._id || '');
+      res.json(users);
+    } catch (error) {
+      console.error('Error searching users:', error);
+      res.status(500).json({ error: 'Failed to search users' });
+    }
+  });
+
+  router.get('/users/:id', requireAuth, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
       res.json(user);
     } catch (error) {
-      console.error("Error updating profile:", error);
-      res.status(500).json({ message: "Failed to update profile" });
+      console.error('Error fetching user:', error);
+      res.status(500).json({ error: 'Failed to fetch user' });
+    }
+  });
+
+  router.put('/users/:id', requireAuth, async (req, res) => {
+    try {
+      if (req.params.id !== req.user?._id) {
+        return res.status(403).json({ error: 'Not authorized to update this user' });
+      }
+      const updates: UpdateUser = req.body;
+      const updatedUser = await storage.updateUser(req.params.id, updates);
+      if (!updatedUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      res.json(updatedUser);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      res.status(500).json({ error: 'Failed to update user' });
     }
   });
 
@@ -349,129 +385,68 @@ export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   });
 
   // Message routes
-  app.get('/api/messages/:chatId', requireAuth, async (req: any, res) => {
+  router.post('/messages', requireAuth, async (req, res) => {
     try {
-      const currentUserId = req.session.userId;
-      const { chatId } = req.params;
-      
-      console.log('Fetching messages for chat:', { chatId, userId: currentUserId });
+      const messageData: InsertMessage = {
+        ...req.body,
+        senderId: req.user?._id
+      };
+      const message = await storage.createMessage(messageData);
+      res.status(201).json(message);
+    } catch (error) {
+      console.error('Error creating message:', error);
+      res.status(500).json({ error: 'Failed to create message' });
+    }
+  });
 
-      // Mark messages as read when fetching
-      if (chatId) {
-        await storage.markMessagesInChatAsRead(chatId, currentUserId);
-      }
-
-      // Get messages between users
-      const messages = chatId ? await storage.getMessagesByChatId(chatId) : [];
-      
-      console.log(`Found ${messages.length} messages between users`);
-      
-      // Sort messages by createdAt timestamp
-      messages.sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateA - dateB;
-      });
-      
+  router.get('/messages/:chatId', requireAuth, async (req, res) => {
+    try {
+      const messages = await storage.getMessagesByChatId(req.params.chatId);
       res.json(messages);
     } catch (error) {
-      console.error("Error fetching messages:", error);
-      if (error instanceof Error) {
-        console.error('Error details:', {
-          message: error.message,
-          name: error.name,
-          stack: error.stack
-        });
-      }
-      res.status(500).json({ 
-        message: "Failed to fetch messages",
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      console.error('Error fetching messages:', error);
+      res.status(500).json({ error: 'Failed to fetch messages' });
     }
   });
 
-  app.post('/api/messages', requireAuth, async (req: any, res) => {
+  router.put('/messages/:chatId/read', requireAuth, async (req, res) => {
     try {
-      const senderId = req.session.userId;
-      const messageData = insertMessageSchema.parse({
-        ...req.body,
-        senderId,
-      });
-      
-      if (!messageData.content) {
-        return res.status(400).json({ message: "Message content is required" });
-      }
-      
-      // Encrypt message content before saving
-      const encryptedContent = encrypt(messageData.content);
-      
-      // Create message in storage
-      const createdMessage = await storage.createMessage({
-        senderId: messageData.senderId,
-        receiverId: messageData.receiverId,
-        content: encryptedContent, // Pass the encrypted content
-        isRead: false
-      });
-      
-      // Return message with decrypted content for immediate display
-      const decryptedMessage = { 
-        ...createdMessage, 
-        content: decrypt(createdMessage.encryptedContent) 
-      };
-      
-      res.json(decryptedMessage);
+      await storage.markMessagesInChatAsRead(req.params.chatId, req.user?._id || '');
+      res.status(200).json({ message: 'Messages marked as read' });
     } catch (error) {
-      console.error("Error creating message:", error);
-      if (error instanceof Error) {
-        console.error('Error details:', {
-          message: error.message,
-          name: error.name,
-          stack: error.stack
-        });
-      }
-      res.status(500).json({ 
-        message: "Failed to create message",
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      console.error('Error marking messages as read:', error);
+      res.status(500).json({ error: 'Failed to mark messages as read' });
     }
   });
 
-  app.get('/api/chats', requireAuth, async (req: any, res) => {
+  router.delete('/messages/:messageId', requireAuth, async (req, res) => {
     try {
-      const userId = req.session.userId;
-      // Fetch all users except the current one
-      const users = await storage.getAllUsers(userId);
-
-      console.log(`Fetched users for sidebar (excluding ${userId}):`, users);
-
-      // Return the list of users. Conversation details (last message, unread count)
-      // can be fetched when a user is selected.
-      res.json(users);
+      const success = await storage.deleteMessage(req.params.messageId, req.user?._id || '');
+      if (!success) {
+        return res.status(404).json({ error: 'Message not found or not authorized' });
+      }
+      res.status(200).json({ message: 'Message deleted successfully' });
     } catch (error) {
-      console.error("Error fetching users for chat sidebar:", error);
-      res.status(500).json({ message: "Failed to fetch users" });
+      console.error('Error deleting message:', error);
+      res.status(500).json({ error: 'Failed to delete message' });
     }
   });
 
-  // Add DELETE endpoint for messages
-  app.delete('/api/messages', requireAuth, async (req: any, res) => {
+  router.delete('/messages', requireAuth, async (req, res) => {
     try {
-      const userId = req.session.userId;
-      const { messageIds } = req.body; // Expecting an array of message IDs in the request body
-
-      if (!Array.isArray(messageIds) || messageIds.length === 0) {
-        return res.status(400).json({ message: "Invalid or empty list of message IDs provided." });
+      const { messageIds } = req.body;
+      if (!Array.isArray(messageIds)) {
+        return res.status(400).json({ error: 'messageIds must be an array' });
       }
-
-      // Call the deleteMessages function from storage
-      const deletedCount = await storage.deleteMessages(messageIds, userId);
-
-      res.json({ message: `Successfully deleted ${deletedCount} message(s).`, deletedCount });
+      const deletedCount = await storage.deleteMessages(messageIds, req.user?._id || '');
+      res.status(200).json({ deletedCount });
     } catch (error) {
-      console.error("Error deleting messages:", error);
-      res.status(500).json({ message: "Failed to delete messages" });
+      console.error('Error deleting messages:', error);
+      res.status(500).json({ error: 'Failed to delete messages' });
     }
   });
 
   return httpServer;
 }
+
+export default router;

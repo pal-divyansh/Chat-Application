@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useMessages } from '../hooks/useMessages';
 import { useAuth } from '../hooks/useAuth';
 import { format } from 'date-fns';
+import { MessageWithUser } from '@shared/schema';
 
 interface ChatWindowProps {
   chatId: string;
@@ -46,19 +47,19 @@ export function ChatWindow({ chatId, recipientName }: ChatWindowProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages?.map((msg) => (
+        {messages?.map((msg: MessageWithUser) => (
           <div
             key={msg._id}
-            className={`flex ${msg.sender._id === user?._id ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${msg.senderId === user?._id ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-[70%] rounded-lg p-3 ${
-                msg.sender._id === user?._id
+                msg.senderId === user?._id
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-200 text-gray-800'
               }`}
             >
-              {msg.sender._id !== user?._id && (
+              {msg.senderId !== user?._id && (
                 <div className="text-xs text-gray-500 mb-1">{msg.sender.username}</div>
               )}
               <div>{msg.content}</div>
@@ -82,7 +83,7 @@ export function ChatWindow({ chatId, recipientName }: ChatWindowProps) {
           />
           <button
             type="submit"
-            disabled={!message.trim() || sendMessage.isLoading}
+            disabled={!message.trim() || sendMessage.isPending}
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           >
             Send

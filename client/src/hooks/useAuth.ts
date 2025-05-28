@@ -1,17 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
+import { User } from '@shared/schema';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-
-interface User {
-  _id: string;
-  username: string;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  status?: string;
-  profileImageUrl?: string;
-}
 
 interface LoginCredentials {
   username: string;
@@ -61,7 +52,7 @@ export function useAuth() {
     },
     retry: false,
     staleTime: 5 * 60 * 1000,
-    cacheTime: 10 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
   });
