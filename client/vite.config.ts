@@ -11,20 +11,19 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
-        credentials: true
       },
       '/socket.io': {
         target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
         ws: true,
-        credentials: true
       },
     },
   },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@shared': path.resolve(__dirname, '../shared'),
     },
   },
 }); 

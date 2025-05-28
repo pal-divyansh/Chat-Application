@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useMessages } from '../hooks/useMessages';
 import { useAuth } from '../hooks/useAuth';
 import { format } from 'date-fns';
-import { MessageWithUser } from '@shared/schema';
+import { MessageWithUser, User } from '@shared/schema';
 
 interface ChatWindowProps {
   chatId: string;
