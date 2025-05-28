@@ -33,7 +33,7 @@ class UserSchema {
 // Message Schema
 @modelOptions({ schemaOptions: { timestamps: true } })
 class MessageSchema {
-  @prop({ type: () => Types.ObjectId, required: true })
+  @prop({ type: () => Types.ObjectId })
   _id!: Types.ObjectId;
 
   @prop({ type: String, required: true })
@@ -89,16 +89,16 @@ export const userValidationSchema = z.object({
 });
 
 export const insertMessageSchema = z.object({
+  chatId: z.string(),
   senderId: z.string(),
-  receiverId: z.string(),
   content: z.string().min(1, "Message content is required"),
   isRead: z.boolean().default(false)
 });
 
 export const messageValidationSchema = z.object({
+  chatId: z.string(),
   senderId: z.string(),
-  receiverId: z.string(),
-  encryptedContent: z.string(),
+  content: z.string(),
   isRead: z.boolean().default(false)
 });
 
@@ -107,8 +107,12 @@ export type User = InstanceType<typeof UserModel>;
 // Define a clean Message type for the client
 export interface Message {
   _id?: string; // Use string for client-side ID representation
-  senderId: string;
-  receiverId: string;
+  chatId: string;
+  sender: {
+    _id: string;
+    username: string;
+    profileImageUrl?: string;
+  };
   content: string; // Decrypted content for client
   isRead?: boolean;
   createdAt?: Date | string; // Allow Date or string for flexibility
@@ -116,6 +120,7 @@ export interface Message {
 }
 
 export type UpsertUser = z.infer<typeof userValidationSchema>;
-// For backward compatibility
-export type InsertMessage = Omit<z.infer<typeof insertMessageSchema>, '_id' | 'createdAt' | 'updatedAt'>;
+// For backward compatibility - update if still used elsewhere with old structure
+// export type InsertMessage = Omit<z.infer<typeof insertMessageSchema>, '_id' | 'createdAt' | 'updatedAt'>;
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type UpdateUser = Partial<Omit<UpsertUser, 'username' | 'password'>>;

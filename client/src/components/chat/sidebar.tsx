@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Search, User, LogOut } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { User as UserType } from "@shared/schema";
+import { useAuth } from "@/hooks/useAuth";
 
 interface SidebarProps {
   selectedUser: UserType | null;
@@ -28,14 +29,10 @@ export default function Sidebar({ selectedUser, onSelectUser, onShowProfile }: S
     user.username?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const { logout } = useAuth();
+
   const handleLogout = async () => {
-    try {
-      await fetch("/api/logout", { method: "POST" });
-      window.location.reload();
-    } catch (error) {
-      console.error("Logout error:", error);
-      window.location.reload();
-    }
+    logout.mutate();
   };
 
   const getDisplayName = (user: UserType) => {

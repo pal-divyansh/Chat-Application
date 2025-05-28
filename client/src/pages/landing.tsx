@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageCircle, UserPlus, LogIn } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 
-const API_URL = '/api'; // Use relative URL to work with Vite proxy
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 export default function Landing() {
   const [loginUsername, setLoginUsername] = useState("");
@@ -20,92 +20,8 @@ export default function Landing() {
   const [lastName, setLastName] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { login, register } = useAuth();
   const [location, setLocation] = useLocation();
-
-  const loginMutation = useMutation({
-    mutationFn: async (credentials: { username: string; password: string }) => {
-      const response = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(credentials),
-      });
-
-      const contentType = response.headers.get('content-type');
-      
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON login response:', text);
-        throw new Error('Invalid server response');
-      }
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
-      }
-      
-      return data;
-    },
-    onSuccess: async (data) => {
-      // Update the auth state with the user data
-      queryClient.setQueryData(['auth/user'], data.user || data);
-      
-      toast({
-        title: "Welcome!",
-        description: "You've successfully logged in.",
-      });
-      
-      // Wait for the auth state to be updated
-      await queryClient.invalidateQueries({ queryKey: ['auth/user'] });
-      
-      // Add a small delay to ensure state is updated
-      setTimeout(() => {
-        setLocation('/');
-      }, 100);
-    },
-    onError: (error: any) => {
-      console.error("Login error:", error);
-      toast({
-        title: "Login failed",
-        description: error.message || "Invalid username or password. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const signupMutation = useMutation({
-    mutationFn: async (data: { username: string; password: string; firstName?: string; lastName?: string }) => {
-      return await apiRequest("POST", `${API_URL}/signup`, data);
-    },
-    onSuccess: async (data) => {
-      // Update the auth state with the user data
-      queryClient.setQueryData(['auth/user'], data.user || data);
-      
-      toast({
-        title: "Welcome!",
-        description: "Account created successfully. You're now logged in.",
-      });
-      
-      // Wait for the auth state to be updated
-      await queryClient.invalidateQueries({ queryKey: ['auth/user'] });
-      
-      // Add a small delay to ensure state is updated
-      setTimeout(() => {
-        setLocation('/');
-      }, 100);
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Signup failed",
-        description: error.message || "Username already exists. Try logging in instead.",
-        variant: "destructive",
-      });
-    },
-  });
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +41,7 @@ export default function Landing() {
       });
       return;
     }
-    loginMutation.mutate({
+    login.mutate({
       username: loginUsername.trim(),
       password: loginPassword,
     });
@@ -149,7 +65,7 @@ export default function Landing() {
       });
       return;
     }
-    signupMutation.mutate({
+    register.mutate({
       username: signupUsername.trim(),
       password: signupPassword,
       firstName: firstName.trim() || undefined,
@@ -198,7 +114,7 @@ export default function Landing() {
                       value={loginUsername}
                       onChange={(e) => setLoginUsername(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary text-lg py-3"
-                      disabled={loginMutation.isPending}
+                      disabled={login.isPending}
                       autoFocus
                     />
                   </div>
@@ -210,16 +126,16 @@ export default function Landing() {
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary text-lg py-3"
-                      disabled={loginMutation.isPending}
+                      disabled={login.isPending}
                     />
                   </div>
                   
                   <Button 
                     type="submit"
-                    disabled={!loginUsername.trim() || !loginPassword || loginMutation.isPending}
+                    disabled={!loginUsername.trim() || !loginPassword || login.isPending}
                     className="w-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary py-3 rounded-xl font-semibold transition-all transform hover:scale-[1.02]"
                   >
-                    {loginMutation.isPending ? "Logging in..." : "Login"}
+                    {login.isPending ? "Logging in..." : "Login"}
                   </Button>
                 </form>
                 
@@ -239,7 +155,7 @@ export default function Landing() {
                       value={signupUsername}
                       onChange={(e) => setSignupUsername(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary text-lg py-3"
-                      disabled={signupMutation.isPending}
+                      disabled={register.isPending}
                     />
                   </div>
                   
@@ -250,7 +166,7 @@ export default function Landing() {
                       value={signupPassword}
                       onChange={(e) => setSignupPassword(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary text-lg py-3"
-                      disabled={signupMutation.isPending}
+                      disabled={register.isPending}
                     />
                   </div>
                   
@@ -261,7 +177,7 @@ export default function Landing() {
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary"
-                      disabled={signupMutation.isPending}
+                      disabled={register.isPending}
                     />
                     <Input
                       type="text"
@@ -269,16 +185,16 @@ export default function Landing() {
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
                       className="bg-accent border-border/50 focus:border-primary"
-                      disabled={signupMutation.isPending}
+                      disabled={register.isPending}
                     />
                   </div>
                   
                   <Button 
                     type="submit"
-                    disabled={!signupUsername.trim() || !signupPassword || signupMutation.isPending}
+                    disabled={!signupUsername.trim() || !signupPassword || register.isPending}
                     className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 py-3 rounded-xl font-semibold transition-all transform hover:scale-[1.02]"
                   >
-                    {signupMutation.isPending ? "Creating account..." : "Create Account"}
+                    {register.isPending ? "Creating account..." : "Create Account"}
                   </Button>
                 </form>
                 

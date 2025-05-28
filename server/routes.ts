@@ -9,6 +9,7 @@ import { Server as SocketIOServer } from "socket.io";
 import type { Socket } from "socket.io";
 import multer from 'multer';
 import path from 'path';
+import session from 'express-session'; // Import session type for middleware
 
 // Set up multer storage
 const storageConfig = multer.diskStorage({
@@ -31,54 +32,99 @@ const storageConfig = multer.diskStorage({
 
 const upload = multer({ storage: storageConfig });
 
-export function registerRoutes(app: Express): Server {
+export function registerRoutes(app: Express, sessionMiddleware: any): Server {
   const httpServer = createServer(app);
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: "http://localhost:5173",
+      origin: process.env.CLIENT_URL || "http://localhost:5174",
       methods: ["GET", "POST"],
       credentials: true
     }
   });
 
+  // Apply the session middleware to Socket.IO
+  io.engine.use(sessionMiddleware);
+
   // Socket.IO connection handling
   io.on('connection', (socket: Socket) => {
     console.log('Client connected:', socket.id);
+    console.log('Socket listening for events:', Object.keys(socket.listeners('*')));
 
     socket.on('join', (userId: string) => {
       socket.join(userId);
       console.log(`User ${userId} joined their room`);
     });
 
-    socket.on('sendMessage', async (message: { senderId: string; receiverId: string; content: string }) => {
+    socket.on('sendMessage', async (message: { chatId: string; content: string }) => {
+      console.log(`[Socket] Entering sendMessage handler for socket ${socket.id}`);
+      console.log(`[Socket] !!! Received sendMessage event from socket ${socket.id} !!!`);
+      console.log(`[Socket] Received sendMessage event from ${socket.id}`, message);
+
       try {
-        const { senderId, receiverId, content } = message;
+        // The senderId should come from the authenticated user's session associated with the socket
+        const senderId = (socket as any).request.session.userId; 
+        const { chatId, content } = message;
         
-        // Encrypt message content
-        const encryptedContent = encrypt(content);
-        
-        // Save message to database
-        const createdMessage = await storage.createMessage({
+        if (!senderId) {
+          console.error(`[Socket] sendMessage failed: No senderId in session for socket ${socket.id}`);
+          socket.emit('error', { message: 'Authentication required' });
+          return;
+        }
+
+        if (!chatId || !content) {
+          console.error(`[Socket] sendMessage failed: Missing chatId or content`, { chatId, content });
+          socket.emit('error', { message: 'Missing chat or message content' });
+          return;
+        }
+
+        console.log(`[Socket] Validated senderId and message data:`, {
           senderId,
-          receiverId,
-          content: encryptedContent,
-          isRead: false
+          chatId,
+          contentLength: content.length,
+          socketId: socket.id
         });
 
-        // Decrypt message for sending
-        const decryptedMessage = {
-          ...createdMessage,
-          content: decrypt(createdMessage.encryptedContent)
-        };
-
-        // Emit to sender
-        io.to(senderId).emit('newMessage', decryptedMessage);
+        // Encrypt message content
+        console.log(`[Socket] Encrypting message...`);
+        const encryptedContent = encrypt(content);
+        console.log(`[Socket] Message encrypted successfully`);
         
-        // Emit to receiver
-        io.to(receiverId).emit('newMessage', decryptedMessage);
+        // Save message to database
+        console.log(`[Socket] Attempting to save message to database...`);
+        try {
+          console.log(`[Socket] Calling storage.createMessage with:`, { chatId, senderId, content: '<encrypted>', isRead: false });
+          const createdMessage = await storage.createMessage({
+            chatId: chatId,
+            senderId: senderId,
+            content: encryptedContent,
+            isRead: false
+          });
+          console.log(`[Socket] Message saved successfully by storage:`, { messageId: createdMessage._id, chatId: createdMessage.chatId });
+
+          // Decrypt message for sending
+          const decryptedMessage = {
+            ...createdMessage,
+            content: decrypt(createdMessage.content) // Use createdMessage.content which is encrypted here
+          };
+          console.log(`[Socket] Message decrypted for emission`);
+
+          // Emit the new message to all users in the chat room (identified by chatId)
+          console.log(`[Socket] Emitting newMessage to chat room ${chatId}...`);
+          io.to(chatId).emit('newMessage', decryptedMessage);
+
+          console.log(`[Socket] Message emission complete`);
+        } catch (dbError) {
+          console.error(`[Socket] Database error while saving message:`, {
+            error: dbError,
+            message: dbError instanceof Error ? dbError.message : 'Unknown error',
+            stack: dbError instanceof Error ? dbError.stack : undefined
+          });
+          socket.emit('error', { message: 'Failed to save message' }); // Emit error to client
+        }
+
       } catch (error) {
-        console.error('Error handling message:', error);
-        socket.emit('error', { message: 'Failed to send message' });
+        console.error(`[Socket] Error handling sendMessage event:`, error);
+        socket.emit('error', { message: 'Failed to process message' });
       }
     });
 
@@ -197,17 +243,46 @@ export function registerRoutes(app: Express): Server {
   // Get current user
   app.get('/api/auth/user', async (req: any, res) => {
     try {
+      console.log('Auth user request received:', {
+        sessionId: req.sessionID,
+        hasUserId: !!req.session?.userId,
+        userId: req.session?.userId
+      });
+
       if (!req.session?.userId) {
+        console.log('No user ID in session, returning 401');
         return res.status(401).json({ message: "Not logged in" });
       }
+
       const user = await storage.getUser(req.session.userId);
+      console.log('User fetch result:', {
+        found: !!user,
+        userId: req.session.userId
+      });
+
       if (!user) {
+        console.log('User not found in database, returning 401');
         return res.status(401).json({ message: "User not found" });
       }
-      res.json(user);
+
+      // Remove sensitive data before sending
+      const { password, ...userWithoutPassword } = user;
+      console.log('Sending user data (without password)');
+      
+      res.json(userWithoutPassword);
     } catch (error) {
       console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack
+        });
+      }
+      res.status(500).json({ 
+        message: "Failed to fetch user",
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
@@ -274,16 +349,22 @@ export function registerRoutes(app: Express): Server {
   });
 
   // Message routes
-  app.get('/api/messages/:otherUserId', requireAuth, async (req: any, res) => {
+  app.get('/api/messages/:chatId', requireAuth, async (req: any, res) => {
     try {
       const currentUserId = req.session.userId;
-      const { otherUserId } = req.params;
+      const { chatId } = req.params;
       
-      // Mark messages as read when fetching
-      await storage.markMessagesAsRead(otherUserId, currentUserId);
+      console.log('Fetching messages for chat:', { chatId, userId: currentUserId });
 
-      // messages are now decrypted in the storage.getMessagesBetweenUsers method
-      const messages = await storage.getMessagesBetweenUsers(currentUserId, otherUserId);
+      // Mark messages as read when fetching
+      if (chatId) {
+        await storage.markMessagesInChatAsRead(chatId, currentUserId);
+      }
+
+      // Get messages between users
+      const messages = chatId ? await storage.getMessagesByChatId(chatId) : [];
+      
+      console.log(`Found ${messages.length} messages between users`);
       
       // Sort messages by createdAt timestamp
       messages.sort((a, b) => {
@@ -295,7 +376,17 @@ export function registerRoutes(app: Express): Server {
       res.json(messages);
     } catch (error) {
       console.error("Error fetching messages:", error);
-      res.status(500).json({ message: "Failed to fetch messages" });
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack
+        });
+      }
+      res.status(500).json({ 
+        message: "Failed to fetch messages",
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 

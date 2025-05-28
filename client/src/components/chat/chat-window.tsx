@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -7,10 +7,33 @@ import { Badge } from "@/components/ui/badge";
 import { Phone, Video, MoreVertical, Paperclip, Smile, Send, Trash2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useSocket } from "@/hooks/useSocket";
+import { useMessages } from "@/hooks/useMessages";
 import { format } from "date-fns";
-import type { User, Message } from "@shared/schema";
 import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
-import { Types } from 'mongoose';
+
+interface User {
+  _id: string;
+  username: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  status?: string;
+  profileImageUrl?: string;
+}
+
+interface Message {
+  _id: string;
+  chatId: string;
+  sender: {
+    _id: string;
+    username: string;
+    profileImageUrl?: string;
+  };
+  content: string;
+  type: 'text' | 'image' | 'file';
+  createdAt: string;
+  readBy: string[];
+}
 
 interface ChatWindowProps {
   selectedUser: User | null;
@@ -19,107 +42,89 @@ interface ChatWindowProps {
 export default function ChatWindow({ selectedUser }: ChatWindowProps) {
   const [messageInput, setMessageInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { user: currentUser } = useAuth();
-  const { socket, sendMessage } = useSocket();
-  const queryClient = useQueryClient();
-
+  const { user: currentUser } = useAuth() as { user: User | null };
+  const socket = useSocket();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
 
-  // Fetch initial messages
-  const { data: fetchedMessages, isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/messages", selectedUser?._id?.toString()],
-    queryFn: async () => {
-      if (!selectedUser) return [];
-      const response = await fetch(`/api/messages/${selectedUser._id.toString()}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch messages');
-      }
-      const data: Message[] = await response.json();
-      console.log('Fetched initial messages:', data);
-      return data;
-    },
-    enabled: !!selectedUser,
-  });
+  // Generate a chatId from the current user and selected user IDs
+  const chatId = currentUser && selectedUser 
+    ? [currentUser._id, selectedUser._id].sort().join('_')
+    : null;
 
-  // Update local messages when fetched messages change
+  // Use the useMessages hook with the generated chatId
+  const { 
+    messages, 
+    isLoading: isLoadingMessages, 
+    error,
+    addMessage 
+  } = useMessages(chatId || '');
+
+  // Join chat room when chatId changes
   useEffect(() => {
-    if (fetchedMessages) {
-      console.log('Fetched messages updated, setting local state:', fetchedMessages);
-      setLocalMessages(fetchedMessages);
-    }
-  }, [fetchedMessages]);
-
-  // Listen for new messages
-  useEffect(() => {
-    if (!socket) {
-      console.log('Socket not available in chat window useEffect.');
-      return;
-    }
-
-    console.log('Setting up newMessage event listener.');
-
-    const handleNewMessage = (message: any) => {
-      console.log('newMessage event received:', message);
-
-      // Check if the message is between the current user and the selected user
-      const currentUserIdString = currentUser?._id?.toString();
-      const selectedUserIdString = selectedUser?._id?.toString();
-
-      const isMessageForThisChat =
-        (message.senderId === currentUserIdString && message.receiverId === selectedUserIdString) ||
-        (message.senderId === selectedUserIdString && message.receiverId === currentUserIdString);
-
-      if (isMessageForThisChat) {
-        console.log('Message is for the selected chat. Updating local messages.', message);
-
-        // Create a clean message object with only necessary properties
-        // Explicitly map properties to match the expected Message type structure
-        const cleanMessage: Message = {
-            _id: message._id ? message._id.toString() : undefined, // Convert ObjectId to string
-            senderId: message.senderId,
-            receiverId: message.receiverId,
-            content: message.content, // Use the decrypted content
-            isRead: message.isRead || false, // Default to false if undefined
-            createdAt: message.createdAt ? new Date(message.createdAt) : new Date(), // Ensure Date object
-            updatedAt: message.updatedAt ? new Date(message.updatedAt) : new Date(), // Ensure Date object
-        };
-
-        setLocalMessages(prev => [...prev, cleanMessage]);
-
-      } else {
-        console.log('Message is not for the selected chat. Ignoring.', message);
-      }
+    if (!socket || !chatId) return;
+    
+    console.log('Joining chat room:', chatId);
+    socket.emit('joinChat', chatId);
+    
+    const handleNewMessage = (message: Message) => {
+      console.log('New message received:', message);
+      addMessage(message);
     };
-
+    
     socket.on('newMessage', handleNewMessage);
-
+    
     return () => {
-      console.log('Cleaning up newMessage event listener.');
+      console.log('Leaving chat room:', chatId);
       socket.off('newMessage', handleNewMessage);
     };
-  }, [socket, currentUser?._id, selectedUser?._id]);
+  }, [socket, chatId, addMessage]);
 
-  // Scroll to bottom when local messages change
+  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
-  }, [localMessages]);
+  }, [messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleSendMessage = () => {
-    if (messageInput.trim() && selectedUser) {
-      sendMessage({
-        receiverId: selectedUser._id.toString(),
-        content: messageInput.trim()
+    if (messageInput.trim() && selectedUser && socket && currentUser && chatId) {
+      const messageData = {
+        chatId,
+        content: messageInput.trim(),
+        senderId: currentUser._id
+      };
+      
+      console.log('Sending message:', messageData);
+      
+      // Emit the message to the server
+      socket.emit('sendMessage', messageData, (response: { status: string; message?: any; error?: string }) => {
+        if (response.status === 'error') {
+          console.error('Error sending message:', response.error);
+          alert('Failed to send message. Please try again.');
+        } else {
+          console.log('Message sent successfully:', response.message);
+        }
       });
+      
+      // Clear the input field
       setMessageInput("");
       setShowEmojiPicker(false);
+    } else {
+      console.log('Cannot send message - missing data:', {
+        hasMessage: !!messageInput.trim(),
+        hasSelectedUser: !!selectedUser,
+        hasSocket: !!socket,
+        hasCurrentUser: !!currentUser,
+        hasChatId: !!chatId,
+      });
+      if (socket && !socket.connected) {
+        console.log('Socket is available but not connected.');
+      }
     }
   };
 
@@ -145,17 +150,13 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
 
   const handleEmojiClick = (emojiData: EmojiClickData) => {
     setMessageInput(prevMsgInput => prevMsgInput + emojiData.emoji);
-    // Optionally hide the picker after selecting an emoji
-    // setShowEmojiPicker(false);
   };
 
   const handleSmileClick = () => {
     setShowEmojiPicker(!showEmojiPicker);
   };
 
-  const handleMessageSelect = (messageId: string | undefined) => {
-    if (!messageId) return;
-
+  const handleMessageSelect = (messageId: string) => {
     setSelectedMessageIds(prevSelected => {
       const newSelected = new Set(prevSelected);
       if (newSelected.has(messageId)) {
@@ -168,14 +169,9 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
   };
 
   const handleDeleteMessages = async () => {
-    if (selectedMessageIds.size === 0) return;
+    if (selectedMessageIds.size === 0 || !chatId) return;
 
-    // In a real application, you would confirm with the user before deleting
-    if (!window.confirm(`Are you sure you want to delete ${selectedMessageIds.size} message(s)?`)) {
-      return; // User cancelled deletion
-    }
-
-    console.log('Attempting to delete messages with IDs:', selectedMessageIds); // Log message IDs to be deleted
+    const messageIdsToDelete = Array.from(selectedMessageIds);
 
     try {
       const response = await fetch('/api/messages', {
@@ -183,28 +179,21 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ messageIds: Array.from(selectedMessageIds) }),
+        body: JSON.stringify({ messageIds: messageIdsToDelete, chatId }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
         console.error('Failed to delete messages:', errorData);
-        // Optionally show an error message to the user
         alert(`Failed to delete messages: ${errorData.message || response.statusText}`);
         return;
       }
 
-      // Upon successful deletion, update local state and clear selection
       console.log('Messages deleted successfully from server.');
-      // Use functional update to ensure we have the latest state
-      setLocalMessages(prevMessages =>
-        prevMessages.filter(msg => msg._id && !selectedMessageIds.has(msg._id))
-      );
       setSelectedMessageIds(new Set());
 
     } catch (error) {
       console.error('Error during message deletion API call:', error);
-      // Optionally show an error message to the user
       alert('An error occurred while trying to delete messages.');
     }
   };
@@ -219,6 +208,179 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
   const getInitials = (user: User) => {
     const name = getDisplayName(user);
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
+
+  // Group messages by date
+  const groupMessagesByDate = (messages: Message[]) => {
+    const groups: { [key: string]: Message[] } = {};
+    
+    messages.forEach(message => {
+      const date = format(new Date(message.createdAt), 'yyyy-MM-dd');
+      if (!groups[date]) {
+        groups[date] = [];
+      }
+      groups[date].push(message);
+    });
+    
+    return groups;
+  };
+
+  // Check if messages are from the same sender and close in time
+  const shouldGroupWithPrevious = (current: Message, previous: Message | undefined, index: number) => {
+    if (!previous || index === 0) return false;
+    
+    const timeDiff = new Date(current.createdAt).getTime() - new Date(previous.createdAt).getTime();
+    const minutesDiff = timeDiff / (1000 * 60);
+    
+    return (
+      current.sender._id === previous.sender._id &&
+      minutesDiff < 5 // Group messages from same sender within 5 minutes
+    );
+  };
+
+  // Render a single message
+  const renderMessage = (message: Message, index: number, messages: Message[]) => {
+    const isOwnMessage = message.sender._id === currentUser?._id;
+    const isSelected = message._id ? selectedMessageIds.has(message._id) : false;
+    const previousMessage = index > 0 ? messages[index - 1] : undefined;
+    const nextMessage = index < messages.length - 1 ? messages[index + 1] : undefined;
+    
+    // Determine if we should show avatar and time
+    const showAvatar = !isOwnMessage && !(previousMessage?.sender._id === message.sender._id && 
+      (new Date(message.createdAt).getTime() - new Date(previousMessage.createdAt).getTime()) < 5 * 60 * 1000);
+      
+    const showTime = !nextMessage || 
+      nextMessage.sender._id !== message.sender._id || 
+      (new Date(nextMessage.createdAt).getTime() - new Date(message.createdAt).getTime()) > 5 * 60 * 1000;
+
+    return (
+      <div
+        key={message._id}
+        className={`group flex ${isOwnMessage ? 'justify-end' : 'justify-start'} mb-1.5 px-3`}
+      >
+        {/* Sender's avatar (only show for received messages) */}
+        <div className={`flex-shrink-0 self-end mr-2 ${isOwnMessage ? 'order-2' : 'order-1'}`}>
+          {showAvatar && !isOwnMessage ? (
+            <Avatar className="w-8 h-8 border-2 border-border">
+              <AvatarImage 
+                src={message.sender.profileImageUrl} 
+                alt={message.sender.username} 
+                className="object-cover"
+              />
+              <AvatarFallback className="bg-muted text-foreground text-xs">
+                {message.sender.username.substring(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+          ) : (
+            <div className="w-8"></div>
+          )}
+        </div>
+        
+        {/* Message bubble */}
+        <div className={`flex flex-col max-w-[75%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>
+          {showAvatar && !isOwnMessage && (
+            <span className="text-xs text-muted-foreground px-2 mb-0.5">
+              {message.sender.username}
+            </span>
+          )}
+          
+          <div className="flex items-end group">
+            <div
+              className={`relative px-4 py-2 rounded-2xl ${
+                isOwnMessage 
+                  ? 'bg-primary text-primary-foreground rounded-br-sm' 
+                  : 'bg-muted text-foreground rounded-bl-sm'
+              } ${isSelected ? 'ring-2 ring-ring ring-offset-1' : ''}`}
+              onClick={() => handleMessageSelect(message._id)}
+            >
+              <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
+              
+              {/* Message time and status */}
+              <div className={`flex items-center justify-end mt-1 space-x-1 ${
+                isOwnMessage ? 'text-primary-foreground/70' : 'text-muted-foreground'
+              }`}>
+                <span className="text-[10px] leading-none">
+                  {format(new Date(message.createdAt), 'h:mm a')}
+                </span>
+                {isOwnMessage && (
+                  <span className="text-xs">
+                    {message.readBy?.length > 1 ? '✓✓' : '✓'}
+                  </span>
+                )}
+              </div>
+              
+              {/* Message tail */}
+              <div className={`absolute -bottom-[1px] w-3 h-3 ${
+                isOwnMessage 
+                  ? 'right-0 translate-x-[1px] bg-primary' 
+                  : 'left-0 -translate-x-[1px] bg-muted'
+              }`} style={{
+                clipPath: isOwnMessage 
+                  ? 'polygon(100% 0, 0 100%, 100% 100%)' 
+                  : 'polygon(0 0, 0 100%, 100% 100%)'
+              }} />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Messages Area JSX
+  const renderMessages = () => {
+    if (isLoadingMessages) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center text-muted-foreground">
+            <div className="animate-pulse flex flex-col items-center">
+              <div className="w-10 h-10 rounded-full bg-muted mb-2"></div>
+              <div className="h-4 w-24 bg-muted rounded mb-1"></div>
+              <div className="h-3 w-32 bg-muted rounded"></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center text-red-500">
+            Error loading messages. Please try again.
+          </div>
+        </div>
+      );
+    }
+
+    if (!messages || messages.length === 0) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center text-muted-foreground">
+            <p className="text-lg font-medium mb-1">No messages yet</p>
+            <p className="text-sm">Send a message to start the conversation!</p>
+          </div>
+        </div>
+      );
+    }
+
+    // Group messages by date and render each group
+    const messageGroups = groupMessagesByDate(messages);
+    
+    return Object.entries(messageGroups).map(([date, dateMessages]) => (
+      <div key={date} className="mb-4">
+        {/* Date separator */}
+        <div className="flex items-center justify-center my-4">
+          <div className="bg-accent text-xs text-muted-foreground px-3 py-1 rounded-full">
+            {format(new Date(date), 'MMMM d, yyyy')}
+          </div>
+        </div>
+        
+        {/* Messages for this date */}
+        <div className="px-2">
+          {dateMessages.map((message, index) => renderMessage(message, index, dateMessages))}
+        </div>
+      </div>
+    ));
   };
 
   if (!selectedUser) {
@@ -283,40 +445,7 @@ export default function ChatWindow({ selectedUser }: ChatWindowProps) {
       
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-        {isLoading ? (
-          <div className="text-center text-muted-foreground">Loading messages...</div>
-        ) : localMessages.length === 0 ? (
-          <div className="text-center text-muted-foreground">
-            No messages yet. Start the conversation!
-          </div>
-        ) : (
-          localMessages.map((message: Message) => {
-            const isOwnMessage = message.senderId === currentUser?._id?.toString();
-            const isSelected = message._id ? selectedMessageIds.has(message._id) : false;
-            return (
-              <div
-                key={message._id?.toString() || Math.random().toString()}
-                className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`message-bubble rounded-2xl px-4 py-2 cursor-pointer ${
-                    isOwnMessage
-                      ? 'bg-gradient-to-r from-primary to-primary/90 text-primary-foreground rounded-br-md'
-                      : 'bg-accent text-accent-foreground rounded-bl-md'
-                  } ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
-                  onClick={() => handleMessageSelect(message._id)}
-                >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${
-                    isOwnMessage ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                  }`}>
-                    {format(new Date(message.createdAt || new Date()), 'h:mm a')}
-                  </p>
-                </div>
-              </div>
-            );
-          })
-        )}
+        {renderMessages()}
         
         {/* Typing Indicator */}
         {isTyping && (

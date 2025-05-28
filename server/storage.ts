@@ -1,6 +1,7 @@
 import { UserModel, MessageModel, type User, type UpsertUser, type InsertMessage, type Message, type UpdateUser } from "@shared/schema";
 import mongoose from 'mongoose';
 import { decrypt } from '../client/src/lib/encryption';
+import { User } from '@shared/schema'; // Ensure User type is imported if needed
 
 export class DatabaseStorage {
   // User operations
@@ -34,40 +35,81 @@ export class DatabaseStorage {
     return await query.lean().exec();
   }
 
+  // Chat operations
+
   // Message operations
-  async createMessage(messageData: InsertMessage): Promise<Message> {
-    const newMessage = new MessageModel({
-      _id: new mongoose.Types.ObjectId(),
-      senderId: messageData.senderId,
-      receiverId: messageData.receiverId,
-      encryptedContent: messageData.content, // The content is already encrypted when it reaches this point
-      isRead: messageData.isRead
-    });
-    return await newMessage.save();
+  async createMessage(messageData: { chatId: string; senderId: string; content: string; isRead: boolean }): Promise<Message> {
+    console.log('[Storage] createMessage called with:', messageData);
+    
+    try {
+      // Derive receiverId from chatId and senderId
+      const userIds = messageData.chatId.split('_');
+      const receiverId = userIds.find(id => id !== messageData.senderId);
+
+      if (!receiverId) {
+        throw new Error('Could not derive receiverId from chatId');
+      }
+
+      const newMessage = new MessageModel({
+        chatId: messageData.chatId,
+        senderId: messageData.senderId, // Set senderId
+        receiverId: receiverId, // Set derived receiverId
+        encryptedContent: messageData.content, // Set encrypted content
+        isRead: messageData.isRead
+      });
+      
+      console.log('[Storage] New MessageModel instance created:', newMessage);
+
+      // Save the message
+      console.log('[Storage] Attempting to save newMessage...', newMessage);
+      console.log('[Storage] Values before save - senderId:', newMessage.senderId);
+      console.log('[Storage] Values before save - receiverId:', newMessage.receiverId);
+      console.log('[Storage] Values before save - encryptedContent:', newMessage.encryptedContent);
+      const savedMessage = await newMessage.save();
+      console.log('[Storage] newMessage saved successfully:', savedMessage);
+      
+      // Populate sender details for the returned message object
+      console.log('[Storage] Populating sender details...');
+      // Populate sender as the client expects a 'sender' object
+      const populatedMessage = await savedMessage.populate('senderId', 'username profileImageUrl');
+      console.log('[Storage] Sender details populated.', populatedMessage);
+      
+      // Return the populated and lean version to match previous return types if necessary
+      const result = populatedMessage.toObject();
+      // Ensure the client-side 'content' field is the decrypted content for immediate display
+      result.content = decrypt(result.encryptedContent); 
+      console.log('[Storage] createMessage returning:', result);
+      return result;
+    } catch (error) {
+      console.error('[Storage] Error in createMessage:', error);
+      throw error; // Re-throw the error so the caller can handle it
+    }
   }
 
-  async getMessagesBetweenUsers(userId1: string, userId2: string): Promise<Message[]> {
-    const messages = await MessageModel.find({
-      $or: [
-        { senderId: userId1, receiverId: userId2 },
-        { senderId: userId2, receiverId: userId1 }
-      ]
-    }).sort({ createdAt: 1 }).lean().exec();
+  async getMessagesByChatId(chatId: string): Promise<Message[]> {
+    // Find messages with the given chatId and sort by creation date
+    const messages = await MessageModel.find({ chatId })
+      .sort({ createdAt: 1 })
+      .populate('sender', 'username profileImageUrl') // Populate sender details
+      .lean()
+      .exec();
 
+    // Decrypt content for all messages
     return messages.map(message => ({
       ...message,
-      content: decrypt(message.encryptedContent)
+      content: decrypt(message.content) // Decrypt the content field
     }));
   }
 
-  async markMessagesAsRead(senderId: string, receiverId: string): Promise<void> {
+  async markMessagesInChatAsRead(chatId: string, receiverId: string): Promise<void> {
+    // Mark messages as read in a specific chat for a specific receiver
     await MessageModel.updateMany(
       {
-        senderId,
-        receiverId,
-        isRead: false
+        chatId: chatId,
+        sender: { $ne: receiverId }, // Only mark messages sent BY others
+        readBy: { $ne: receiverId } // Only mark if not already read by this receiver
       },
-      { $set: { isRead: true } }
+      { $addToSet: { readBy: receiverId } } // Add receiverId to readBy array
     ).exec();
   }
 

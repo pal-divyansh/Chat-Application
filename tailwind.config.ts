@@ -85,10 +85,13 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
       },
       transitionDelay: {
-        DEFAULT: '0ms', // Keep a default if needed
-        '[2s]': '2s', // Explicitly define the arbitrary value
-        // Allow arbitrary values for transition delays
-        ...
+        DEFAULT: '0ms',
+        '[2s]': '2s',
+        '[1s]': '1s',
+        '[500ms]': '500ms',
+        '[250ms]': '250ms',
+        '[100ms]': '100ms',
+        '[50ms]': '50ms'
       },
     },
   },

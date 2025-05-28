@@ -1,5 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -12,7 +14,8 @@ export async function apiRequest<T = any>(
   url: string,
   data?: unknown | undefined,
 ): Promise<T> {
-  const res = await fetch(url, {
+  const fullUrl = url.startsWith('http') ? url : `${API_URL}${url}`;
+  const res = await fetch(fullUrl, {
     method,
     headers: {
       'Accept': 'application/json',
@@ -20,6 +23,7 @@ export async function apiRequest<T = any>(
     },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
+    mode: 'cors'
   });
 
   await throwIfResNotOk(res);
@@ -39,8 +43,11 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey[0] as string, {
+    const url = queryKey[0] as string;
+    const fullUrl = url.startsWith('http') ? url : `${API_URL}${url}`;
+    const res = await fetch(fullUrl, {
       credentials: "include",
+      mode: 'cors',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',

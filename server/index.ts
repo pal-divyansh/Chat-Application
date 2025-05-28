@@ -6,12 +6,32 @@ import { setupVite, serveStatic, log } from "./vite";
 import { connectDB } from "./db";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import cors from 'cors';
+import { createServer } from 'http';
+import { setupWebSocket } from './websocket';
 
 // Define __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const httpServer = createServer(app);
+
+// Configure CORS
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5174',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Accept',
+    'Cache-Control',
+    'X-Requested-With'
+  ],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400 // 24 hours
+}));
 
 // Add request logging middleware
 app.use((req, res, next) => {
@@ -24,7 +44,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 // Add session middleware with updated configuration
-app.use(session({
+const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'chat-app-secret-key',
   resave: true,
   saveUninitialized: true,
@@ -32,15 +52,20 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production',
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     httpOnly: true,
-    sameSite: 'lax'
-  }
-}));
+    sameSite: 'lax',
+    path: '/',
+    domain: process.env.COOKIE_DOMAIN || undefined
+  },
+  name: 'sessionId'
+});
+
+app.use(sessionMiddleware);
 
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Register API routes BEFORE Vite middleware
-const server = registerRoutes(app);
+registerRoutes(app, sessionMiddleware);
 
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
@@ -74,22 +99,23 @@ async function startServer() {
     console.log('Connecting to MongoDB...');
     await connectDB();
     
+    // Set up WebSocket server with session middleware
+    setupWebSocket(httpServer, sessionMiddleware);
+    
     // Then set up Vite
-    await setupVite(app, server);
+    await setupVite(app, httpServer);
     
     // Serve static files in production
     if (process.env.NODE_ENV === 'production') {
       serveStatic(app);
     }
     
-    const port = process.env.PORT || 3000;
-    const host = process.env.HOST || '0.0.0.0';
-    
-    server.listen(parseInt(port as string), host, () => {
-      log(`Server running on http://${host}:${port}`);
+    const PORT = process.env.PORT || 3000;
+    httpServer.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+      console.log(`WebSocket server running on ws://localhost:${PORT}`);
     });
-    
-    return server;
+    return httpServer;
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
