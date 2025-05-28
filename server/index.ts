@@ -103,24 +103,7 @@ async function startServer() {
     await connectDB();
     
     // Set up WebSocket server with session middleware
-    const io = new Server(httpServer, {
-      cors: {
-        origin: process.env.CLIENT_URL || 'http://localhost:5174',
-        credentials: true,
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-        allowedHeaders: [
-          'Content-Type', 
-          'Authorization', 
-          'Accept',
-          'Cache-Control',
-          'X-Requested-With'
-        ],
-        exposedHeaders: ['Set-Cookie'],
-        maxAge: 86400 // 24 hours
-      }
-    });
-    
-    setupSocketHandlers(io, sessionMiddleware);
+    const io = setupSocketHandlers(httpServer, sessionMiddleware);
     
     // Then set up Vite
     await setupVite(app, httpServer);
